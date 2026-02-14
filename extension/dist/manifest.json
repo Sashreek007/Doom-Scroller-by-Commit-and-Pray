@@ -37,7 +37,7 @@
   "content_scripts": [
     {
       "js": [
-        "assets/tracker.ts-loader-Buj361sm.js"
+        "assets/tracker.ts-loader-Bi5-a7fg.js"
       ],
       "matches": [
         "https://facebook.com/*",
@@ -102,8 +102,8 @@
         "https://youtube.com/*"
       ],
       "resources": [
-        "assets/constants-DnDMOe8K.js",
-        "assets/tracker.ts-B5ciGtN0.js"
+        "assets/constants-BqRKAH88.js",
+        "assets/tracker.ts-BsAvz6zy.js"
       ],
       "use_dynamic_url": false
     }

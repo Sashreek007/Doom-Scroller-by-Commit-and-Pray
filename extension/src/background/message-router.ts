@@ -5,6 +5,78 @@ import type { ExtensionMessage, GetStatsResponse } from '../shared/messages';
 import { getSupabase } from './supabase-client';
 import { toCanonicalSite } from '../shared/constants';
 import { triggerOpportunisticSync } from './alarm-handlers';
+import {
+  getCachedDbStats,
+  getCurrentDayKey,
+  getDayStartIso,
+  setDbStatsFromServer,
+} from './stats-cache';
+
+const DB_STATS_REFRESH_INTERVAL_MS = 5000;
+const INITIAL_DB_REFRESH_WAIT_MS = 250;
+const dbRefreshInFlight = new Map<string, Promise<void>>();
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function buildTodayFromSessions(
+  sessions: Array<{ site: string; meters_scrolled: number | string | null }>,
+): { todayMeters: number; todayBysite: Record<string, number> } {
+  const todayBysite: Record<string, number> = {};
+  let todayMeters = 0;
+
+  for (const row of sessions) {
+    const site = toCanonicalSite(row.site);
+    if (!site) continue;
+    const meters = Number(row.meters_scrolled ?? 0);
+    if (!Number.isFinite(meters)) continue;
+    todayMeters += meters;
+    todayBysite[site] = (todayBysite[site] ?? 0) + meters;
+  }
+
+  return {
+    todayMeters,
+    todayBysite,
+  };
+}
+
+function requestDbRefresh(userId: string, dayKey: string, dayStartIso: string): Promise<void> {
+  const existing = dbRefreshInFlight.get(userId);
+  if (existing) return existing;
+
+  const promise = (async () => {
+    const supabase = getSupabase();
+    const [{ data: todaySessions }, { data: profile }] = await Promise.all([
+      supabase
+        .from('scroll_sessions')
+        .select('site, meters_scrolled')
+        .eq('user_id', userId)
+        .gte('created_at', dayStartIso),
+      supabase
+        .from('profiles')
+        .select('total_meters_scrolled')
+        .eq('id', userId)
+        .single(),
+    ]);
+
+    const today = buildTodayFromSessions(
+      (todaySessions ?? []) as Array<{ site: string; meters_scrolled: number | string | null }>,
+    );
+    const totalMeters = Number(profile?.total_meters_scrolled ?? 0);
+
+    setDbStatsFromServer(userId, dayKey, {
+      todayMeters: parseFloat(today.todayMeters.toFixed(2)),
+      todayBysite: today.todayBysite,
+      totalMeters: parseFloat(totalMeters.toFixed(2)),
+    });
+  })().finally(() => {
+    dbRefreshInFlight.delete(userId);
+  });
+
+  dbRefreshInFlight.set(userId, promise);
+  return promise;
+}
 
 export function handleMessage(
   message: ExtensionMessage,
@@ -67,71 +139,36 @@ async function getStats(): Promise<GetStatsResponse> {
     };
   }
 
-  // Get today's start in local time
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
+  const userId = session.user.id;
+  const dayKey = getCurrentDayKey();
+  const dayStartIso = getDayStartIso();
 
-  const { data: todaySessions } = await supabase
-    .from('scroll_sessions')
-    .select('site, meters_scrolled')
-    .eq('user_id', session.user.id)
-    .gte('created_at', todayStart.toISOString());
+  let cached = getCachedDbStats(userId, dayKey);
+  const isUninitialized = cached.updatedAt === 0;
+  const isStale = (Date.now() - cached.updatedAt) > DB_STATS_REFRESH_INTERVAL_MS;
 
-  const todayBysite: Record<string, number> = {};
-  let todayMeters = 0;
-
-  if (todaySessions) {
-    for (const s of todaySessions) {
-      const site = toCanonicalSite(s.site);
-      if (!site) continue;
-      const meters = Number(s.meters_scrolled);
-      todayMeters += meters;
-      todayBysite[site] = (todayBysite[site] ?? 0) + meters;
-    }
+  if (isUninitialized) {
+    await Promise.race([
+      requestDbRefresh(userId, dayKey, dayStartIso),
+      sleep(INITIAL_DB_REFRESH_WAIT_MS),
+    ]);
+  } else if (isStale) {
+    void requestDbRefresh(userId, dayKey, dayStartIso);
   }
 
-  // Merge local unsynced data on top of Supabase data
+  cached = getCachedDbStats(userId, dayKey);
+
+  const todayBysite: Record<string, number> = { ...cached.todayBysite };
   for (const [site, meters] of Object.entries(localBysite)) {
-    todayMeters += meters;
     todayBysite[site] = (todayBysite[site] ?? 0) + meters;
   }
 
-  // Get total from profile
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('total_meters_scrolled')
-    .eq('id', session.user.id)
-    .single();
-
-  const totalFromDb = profile ? Number(profile.total_meters_scrolled) : 0;
-  const accurateTotal = await getAccurateTotalMeters(session.user.id);
-  const baseTotal = accurateTotal ?? totalFromDb;
-
-  // Self-heal drifted profile totals in background (best effort).
-  if (accurateTotal !== null && Math.abs(accurateTotal - totalFromDb) > 0.01) {
-    void supabase
-      .from('profiles')
-      .update({ total_meters_scrolled: parseFloat(accurateTotal.toFixed(2)) })
-      .eq('id', session.user.id);
-  }
+  const todayMeters = cached.todayMeters + localMeters;
+  const totalMeters = cached.totalMeters + localMeters;
 
   return {
     todayMeters: parseFloat(todayMeters.toFixed(2)),
     todayBysite,
-    totalMeters: parseFloat((baseTotal + localMeters).toFixed(2)),
+    totalMeters: parseFloat(totalMeters.toFixed(2)),
   };
-}
-
-async function getAccurateTotalMeters(userId: string): Promise<number | null> {
-  const supabase = getSupabase();
-  const { data, error } = await supabase
-    .from('scroll_sessions')
-    .select('meters_scrolled')
-    .eq('user_id', userId);
-
-  if (error || !data) {
-    return null;
-  }
-
-  return data.reduce((sum, row) => sum + Number(row.meters_scrolled ?? 0), 0);
 }

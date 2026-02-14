@@ -3,7 +3,8 @@ import type { GetStatsResponse } from '@/shared/messages';
 
 const CACHE_KEY = 'cached_scroll_stats';
 const BATCHES_KEY = 'scrollBatches';
-const STATS_REFRESH_INTERVAL_MS = 2000;
+const INFLIGHT_BATCHES_KEY = 'scrollBatchesInFlight';
+const STATS_REFRESH_INTERVAL_MS = 1000;
 
 export function useScrollStats() {
   const [stats, setStats] = useState<GetStatsResponse>({
@@ -49,7 +50,10 @@ export function useScrollStats() {
       changes,
       areaName,
     ) => {
-      if (areaName === 'local' && changes[BATCHES_KEY]) {
+      if (
+        areaName === 'local'
+        && (changes[BATCHES_KEY] || changes[INFLIGHT_BATCHES_KEY])
+      ) {
         refresh();
       }
     };

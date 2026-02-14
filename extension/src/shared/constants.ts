@@ -4,7 +4,7 @@ export const CSS_PIXELS_PER_METER = 3779.5275591;
 export const METERS_PER_PIXEL = 1 / CSS_PIXELS_PER_METER; // ~0.0002646
 
 // How often content script sends data to background (ms)
-export const CONTENT_FLUSH_INTERVAL_MS = 1000;
+export const CONTENT_FLUSH_INTERVAL_MS = 500;
 
 // How often background syncs to Supabase (minutes, for chrome.alarms)
 export const SYNC_INTERVAL_MINUTES = 0.5; // 30 seconds

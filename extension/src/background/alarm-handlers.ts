@@ -4,6 +4,7 @@ import { confirmSyncedBatches, drainBatches, restoreBatches } from './scroll-agg
 import { getSupabase } from './supabase-client';
 import { SYNC_INTERVAL_MINUTES } from '../shared/constants';
 import { ensureProfileExists } from '../shared/profile';
+import { applySyncedBatchesToDbCache } from './stats-cache';
 
 const SYNC_ALARM_NAME = 'sync-scroll';
 const OPPORTUNISTIC_SYNC_INTERVAL_MS = 5000;
@@ -81,6 +82,7 @@ export async function syncToSupabaseNow() {
       // Restore drained batches so data is not lost and can be retried next alarm.
       restoreBatches(batches);
     } else {
+      applySyncedBatchesToDbCache(session.user.id, batches);
       confirmSyncedBatches(batches);
       console.log(`[DoomScroller] Synced ${sessions.length} session(s) to Supabase`);
       // Profile totals are updated by DB trigger on scroll_sessions insert.
