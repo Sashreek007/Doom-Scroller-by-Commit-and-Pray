@@ -5,46 +5,6 @@ interface ChatProps {
   userId: string;
 }
 
-interface ParsedAssistantMessage {
-  quotedUserText: string;
-  reply: string;
-}
-
-function parseLeadingQuotedUserText(content: string): ParsedAssistantMessage | null {
-  const trimmed = content.trim();
-  if (!trimmed) return null;
-
-  const quote = trimmed[0];
-  if (quote !== '"' && quote !== "'") return null;
-
-  let closeIndex = -1;
-  const scanLimit = Math.min(trimmed.length, 180);
-  for (let i = 1; i < scanLimit; i += 1) {
-    if (trimmed[i] === quote) {
-      closeIndex = i;
-      break;
-    }
-  }
-
-  if (closeIndex <= 1) return null;
-
-  const quotedUserText = trimmed.slice(1, closeIndex).trim();
-  if (!quotedUserText || quotedUserText.length > 120) return null;
-
-  let reply = trimmed.slice(closeIndex + 1).trimStart();
-  // Remove awkward opener fragments like: ", username?" or ", again, username?"
-  reply = reply.replace(
-    /^,?\s*(?:again,?\s*)?(?:@[a-z0-9_]{2,30}|[a-z0-9_]{2,30})\??[,:]?\s*/i,
-    '',
-  );
-  reply = reply.replace(/^[,:-]\s*/, '');
-
-  return {
-    quotedUserText,
-    reply,
-  };
-}
-
 export default function Chat({ userId }: ChatProps) {
   const {
     messages,
@@ -109,12 +69,7 @@ export default function Chat({ userId }: ChatProps) {
             No messages yet. Ask the bot what your worst scrolling habit is.
           </p>
         ) : (
-          messages.map((message) => {
-            const parsedAssistant = message.role === 'assistant'
-              ? parseLeadingQuotedUserText(message.content)
-              : null;
-
-            return (
+          messages.map((message) => (
               <div
                 key={message.id}
                 className={`max-w-[88%] px-3 py-2 rounded-lg text-xs leading-relaxed ${
@@ -123,24 +78,9 @@ export default function Chat({ userId }: ChatProps) {
                     : 'mr-auto bg-doom-surface border border-doom-border text-white'
                 }`}
               >
-                {parsedAssistant ? (
-                  <div className="space-y-2">
-                    <div className="rounded-md border border-neon-cyan/30 bg-neon-cyan/10 px-2 py-1">
-                      <p className="text-[10px] uppercase tracking-wide text-neon-cyan/90 font-mono">
-                        You said
-                      </p>
-                      <p className="text-[11px] italic text-neon-cyan/95">
-                        "{parsedAssistant.quotedUserText}"
-                      </p>
-                    </div>
-                    {parsedAssistant.reply && <p>{parsedAssistant.reply}</p>}
-                  </div>
-                ) : (
-                  message.content
-                )}
+                {message.content}
               </div>
-            );
-          })
+          ))
         )}
 
         {sending && (
