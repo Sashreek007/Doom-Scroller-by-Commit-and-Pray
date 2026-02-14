@@ -9,6 +9,7 @@ import Friends from './pages/Friends';
 import Leaderboard from './pages/Leaderboard';
 import Settings from './pages/Settings';
 import Chat from './pages/Chat';
+import Battle from './pages/Battle';
 import BottomNav from './components/BottomNav';
 import { usePendingFriendRequestsCount } from './hooks/usePendingFriendRequestsCount';
 import { metersToCoins } from '@/shared/coins';
@@ -158,7 +159,15 @@ function App() {
           />
         );
       case 'battle':
-        return <div className="text-center text-doom-muted py-8 font-mono text-sm">Battles coming in v3...</div>;
+        return (
+          <Battle
+            userId={currentUser.id}
+            username={headerUsername}
+            displayName={currentProfile?.display_name ?? currentUser.email?.split('@')[0] ?? 'User'}
+            avatarUrl={currentProfile?.avatar_url ?? null}
+            availableCoins={headerCoins}
+          />
+        );
       case 'chat':
         return <Chat userId={currentUser.id} />;
       case 'profile':
