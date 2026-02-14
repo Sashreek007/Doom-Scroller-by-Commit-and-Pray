@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback } from 'react';
 import type { GetStatsResponse } from '@/shared/messages';
 
 const CACHE_KEY = 'cached_scroll_stats';
+const BATCHES_KEY = 'scrollBatches';
+const STATS_REFRESH_INTERVAL_MS = 2000;
 
 export function useScrollStats() {
   const [stats, setStats] = useState<GetStatsResponse>({
@@ -37,8 +39,23 @@ export function useScrollStats() {
 
   useEffect(() => {
     refresh();
-    const interval = setInterval(refresh, 10000);
-    return () => clearInterval(interval);
+    const interval = setInterval(refresh, STATS_REFRESH_INTERVAL_MS);
+
+    const handleStorageChange: Parameters<typeof chrome.storage.onChanged.addListener>[0] = (
+      changes,
+      areaName,
+    ) => {
+      if (areaName === 'local' && changes[BATCHES_KEY]) {
+        refresh();
+      }
+    };
+
+    chrome.storage.onChanged.addListener(handleStorageChange);
+
+    return () => {
+      clearInterval(interval);
+      chrome.storage.onChanged.removeListener(handleStorageChange);
+    };
   }, [refresh]);
 
   return { stats, loading, refresh };

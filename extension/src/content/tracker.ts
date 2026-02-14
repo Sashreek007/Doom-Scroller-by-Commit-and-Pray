@@ -6,16 +6,20 @@ import { getSiteConfig, getScrollContainer, getScrollPosition } from './site-con
 import { METERS_PER_PIXEL, CONTENT_FLUSH_INTERVAL_MS } from '../shared/constants';
 import type { ScrollUpdateMessage } from '../shared/messages';
 
+const REBIND_INTERVAL_MS = 2000;
+
 const config = getSiteConfig();
 if (!config) {
   console.warn('[DoomScroller] No config for', window.location.hostname);
 } else {
-  let lastScrollY = getScrollPosition(config);
+  const activeConfig = config;
   let accumulatedPixels = 0;
+  let currentTarget: Element | Window | null = null;
+  let lastScrollY = 0;
 
   function handleScroll() {
-    if (!config) return;
-    const currentY = getScrollPosition(config);
+    if (!currentTarget) return;
+    const currentY = getScrollPosition(currentTarget);
     const delta = Math.abs(currentY - lastScrollY);
     // Ignore tiny deltas (noise) and impossibly large jumps (page navigation)
     if (delta > 1 && delta < 50000) {
@@ -24,32 +28,32 @@ if (!config) {
     lastScrollY = currentY;
   }
 
-  // Attach passive scroll listener — does NOT block scrolling
-  const scrollTarget = getScrollContainer(config);
-  scrollTarget.addEventListener('scroll', handleScroll, { passive: true });
-
-  // For sites with custom scroll containers, the container might not exist on page load.
-  // Retry finding it after a delay.
-  if (config.scrollContainerSelector) {
-    const retryInterval = setInterval(() => {
-      const el = document.querySelector(config.scrollContainerSelector!);
-      if (el) {
-        el.addEventListener('scroll', handleScroll, { passive: true });
-        clearInterval(retryInterval);
-      }
-    }, 2000);
-
-    // Stop retrying after 30 seconds
-    setTimeout(() => clearInterval(retryInterval), 30000);
+  function detachCurrentTarget() {
+    if (!currentTarget) return;
+    currentTarget.removeEventListener('scroll', handleScroll as EventListener);
   }
 
+  function bindToBestTarget() {
+    const nextTarget = getScrollContainer(activeConfig);
+    if (currentTarget === nextTarget) return;
+
+    detachCurrentTarget();
+    currentTarget = nextTarget;
+    lastScrollY = getScrollPosition(currentTarget);
+    currentTarget.addEventListener('scroll', handleScroll as EventListener, { passive: true });
+  }
+
+  // Bind immediately and keep rebinding for dynamic/SPA containers.
+  bindToBestTarget();
+  const rebindInterval = setInterval(bindToBestTarget, REBIND_INTERVAL_MS);
+
   // Periodically flush accumulated scroll data to background service worker
-  setInterval(() => {
+  const flushInterval = setInterval(() => {
     if (accumulatedPixels > 0) {
       const message: ScrollUpdateMessage = {
         type: 'SCROLL_UPDATE',
         payload: {
-          site: window.location.hostname,
+          site: activeConfig.site,
           pixels: accumulatedPixels,
           meters: accumulatedPixels * METERS_PER_PIXEL,
           timestamp: Date.now(),
@@ -64,5 +68,12 @@ if (!config) {
     }
   }, CONTENT_FLUSH_INTERVAL_MS);
 
-  console.log('[DoomScroller] Tracking scroll on', config.hostname);
+  // Best-effort cleanup for long-lived tabs.
+  window.addEventListener('beforeunload', () => {
+    clearInterval(rebindInterval);
+    clearInterval(flushInterval);
+    detachCurrentTarget();
+  });
+
+  console.log('[DoomScroller] Tracking scroll on', activeConfig.site, '(', activeConfig.hostname, ')');
 }

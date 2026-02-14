@@ -49,6 +49,22 @@ export function clearBatches() {
   chrome.storage.local.remove(STORAGE_KEY);
 }
 
+export function restoreBatches(restored: ScrollBatch[]) {
+  for (const batch of restored) {
+    const existing = batches.get(batch.site);
+    if (existing) {
+      existing.totalPixels += batch.totalPixels;
+      existing.totalMeters += batch.totalMeters;
+      existing.sessionStart = Math.min(existing.sessionStart, batch.sessionStart);
+      existing.lastUpdate = Math.max(existing.lastUpdate, batch.lastUpdate);
+    } else {
+      batches.set(batch.site, { ...batch });
+    }
+  }
+
+  persistBatches();
+}
+
 // Get a snapshot and clear for sync
 export function drainBatches(): ScrollBatch[] {
   const drained = Array.from(batches.values()).filter(

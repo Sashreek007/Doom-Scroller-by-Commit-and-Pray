@@ -9,13 +9,26 @@
     "activeTab"
   ],
   "host_permissions": [
-    "https://www.instagram.com/*",
+    "https://facebook.com/*",
+    "https://*.facebook.com/*",
+    "https://fb.com/*",
+    "https://*.fb.com/*",
     "https://x.com/*",
+    "https://*.x.com/*",
     "https://twitter.com/*",
-    "https://www.tiktok.com/*",
-    "https://www.reddit.com/*",
-    "https://www.youtube.com/*",
-    "https://www.facebook.com/*"
+    "https://*.twitter.com/*",
+    "https://tiktok.com/*",
+    "https://*.tiktok.com/*",
+    "https://instagram.com/*",
+    "https://*.instagram.com/*",
+    "https://snapchat.com/*",
+    "https://*.snapchat.com/*",
+    "https://reddit.com/*",
+    "https://*.reddit.com/*",
+    "https://youtube.com/*",
+    "https://*.youtube.com/*",
+    "https://pinterest.com/*",
+    "https://*.pinterest.com/*"
   ],
   "background": {
     "service_worker": "src/background/index.ts",
@@ -24,13 +37,26 @@
   "content_scripts": [
     {
       "matches": [
-        "https://www.instagram.com/*",
+        "https://facebook.com/*",
+        "https://*.facebook.com/*",
+        "https://fb.com/*",
+        "https://*.fb.com/*",
         "https://x.com/*",
+        "https://*.x.com/*",
         "https://twitter.com/*",
-        "https://www.tiktok.com/*",
-        "https://www.reddit.com/*",
-        "https://www.youtube.com/*",
-        "https://www.facebook.com/*"
+        "https://*.twitter.com/*",
+        "https://tiktok.com/*",
+        "https://*.tiktok.com/*",
+        "https://instagram.com/*",
+        "https://*.instagram.com/*",
+        "https://snapchat.com/*",
+        "https://*.snapchat.com/*",
+        "https://reddit.com/*",
+        "https://*.reddit.com/*",
+        "https://youtube.com/*",
+        "https://*.youtube.com/*",
+        "https://pinterest.com/*",
+        "https://*.pinterest.com/*"
       ],
       "js": ["src/content/tracker.ts"],
       "run_at": "document_idle"

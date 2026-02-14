@@ -3,6 +3,10 @@
 import { addScrollData, getBatches } from './scroll-aggregator';
 import type { ExtensionMessage, GetStatsResponse } from '../shared/messages';
 import { getSupabase } from './supabase-client';
+import { toCanonicalSite } from '../shared/constants';
+
+const TOTAL_CACHE_TTL_MS = 60000;
+const totalMetersCache = new Map<string, { value: number; updatedAt: number }>();
 
 export function handleMessage(
   message: ExtensionMessage,
@@ -12,7 +16,18 @@ export function handleMessage(
   switch (message.type) {
     case 'SCROLL_UPDATE': {
       const { site, pixels, meters } = message.payload;
-      addScrollData(site, pixels, meters);
+      const canonicalSite = toCanonicalSite(site);
+      if (
+        !canonicalSite
+        || !Number.isFinite(pixels)
+        || !Number.isFinite(meters)
+        || pixels <= 0
+        || meters <= 0
+      ) {
+        sendResponse({ ok: false });
+        return false;
+      }
+      addScrollData(canonicalSite, pixels, meters);
       sendResponse({ ok: true });
       return false; // synchronous response
     }
@@ -35,7 +50,9 @@ async function getStats(): Promise<GetStatsResponse> {
   const localBatches = getBatches();
   let localMeters = 0;
   const localBysite: Record<string, number> = {};
-  for (const [site, batch] of localBatches) {
+  for (const [rawSite, batch] of localBatches) {
+    const site = toCanonicalSite(rawSite);
+    if (!site) continue;
     localMeters += batch.totalMeters;
     localBysite[site] = (localBysite[site] ?? 0) + batch.totalMeters;
   }
@@ -66,9 +83,11 @@ async function getStats(): Promise<GetStatsResponse> {
 
   if (todaySessions) {
     for (const s of todaySessions) {
+      const site = toCanonicalSite(s.site);
+      if (!site) continue;
       const meters = Number(s.meters_scrolled);
       todayMeters += meters;
-      todayBysite[s.site] = (todayBysite[s.site] ?? 0) + meters;
+      todayBysite[site] = (todayBysite[site] ?? 0) + meters;
     }
   }
 
@@ -86,10 +105,44 @@ async function getStats(): Promise<GetStatsResponse> {
     .single();
 
   const totalFromDb = profile ? Number(profile.total_meters_scrolled) : 0;
+  const accurateTotal = await getAccurateTotalMeters(session.user.id);
+  const baseTotal = accurateTotal ?? totalFromDb;
+
+  // Self-heal drifted profile totals in background (best effort).
+  if (accurateTotal !== null && Math.abs(accurateTotal - totalFromDb) > 0.01) {
+    void supabase
+      .from('profiles')
+      .update({ total_meters_scrolled: parseFloat(accurateTotal.toFixed(2)) })
+      .eq('id', session.user.id);
+  }
 
   return {
     todayMeters: parseFloat(todayMeters.toFixed(2)),
     todayBysite,
-    totalMeters: parseFloat((totalFromDb + localMeters).toFixed(2)),
+    totalMeters: parseFloat((baseTotal + localMeters).toFixed(2)),
   };
+}
+
+async function getAccurateTotalMeters(userId: string): Promise<number | null> {
+  const cached = totalMetersCache.get(userId);
+  if (cached && (Date.now() - cached.updatedAt) < TOTAL_CACHE_TTL_MS) {
+    return cached.value;
+  }
+
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from('scroll_sessions')
+    .select('meters_scrolled')
+    .eq('user_id', userId);
+
+  if (error || !data) {
+    return null;
+  }
+
+  const total = data.reduce((sum, row) => sum + Number(row.meters_scrolled ?? 0), 0);
+  totalMetersCache.set(userId, {
+    value: total,
+    updatedAt: Date.now(),
+  });
+  return total;
 }
