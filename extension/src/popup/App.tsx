@@ -5,6 +5,8 @@ import Signup from './pages/Signup';
 import SetUsername from './pages/SetUsername';
 import Dashboard from './pages/Dashboard';
 import Profile from './pages/Profile';
+import Friends from './pages/Friends';
+import Leaderboard from './pages/Leaderboard';
 import BottomNav from './components/BottomNav';
 
 function App() {
@@ -66,9 +68,25 @@ function App() {
       case 'home':
         return <Dashboard />;
       case 'board':
-        return <div className="text-center text-doom-muted py-8 font-mono text-sm">Leaderboard coming soon...</div>;
+        return (
+          <Leaderboard
+            userId={user!.id}
+            onViewProfile={(id) => {
+              setViewingProfileId(id);
+              setActivePage('profile');
+            }}
+          />
+        );
       case 'pals':
-        return <div className="text-center text-doom-muted py-8 font-mono text-sm">Friends coming soon...</div>;
+        return (
+          <Friends
+            userId={user!.id}
+            onViewProfile={(id) => {
+              setViewingProfileId(id);
+              setActivePage('profile');
+            }}
+          />
+        );
       case 'battle':
         return <div className="text-center text-doom-muted py-8 font-mono text-sm">Battles coming in v3...</div>;
       case 'chat':
