@@ -1,4 +1,8 @@
-# 🤡🏆 DoomScroller
+<p align="center">
+  <img src="extension/public/icons/icon-128.png" alt="DoomScroller Icon" width="96" />
+</p>
+
+# DoomScroller
 
 We help people who lose hours on social feeds turn invisible doomscrolling into visible, trackable behavior by converting raw scroll movement into real distance (meters), then turning that distance into coins, battles, and AI-powered roast feedback.
 
