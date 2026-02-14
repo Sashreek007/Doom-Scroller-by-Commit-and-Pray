@@ -1,0 +1,62 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-doom-bg text-white antialiased;
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+
+  ::-webkit-scrollbar {
+    width: 4px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-doom-bg;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-doom-border rounded-full;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-doom-muted;
+  }
+}
+
+@layer components {
+  .neon-text-green {
+    color: #39ff14;
+    text-shadow: 0 0 10px rgba(57, 255, 20, 0.5);
+  }
+
+  .neon-text-pink {
+    color: #ff2d78;
+    text-shadow: 0 0 10px rgba(255, 45, 120, 0.5);
+  }
+
+  .neon-text-cyan {
+    color: #00f0ff;
+    text-shadow: 0 0 10px rgba(0, 240, 255, 0.5);
+  }
+
+  .neon-border {
+    @apply border border-neon-green/30;
+    box-shadow: 0 0 10px rgba(57, 255, 20, 0.1), inset 0 0 10px rgba(57, 255, 20, 0.05);
+  }
+
+  .card {
+    @apply bg-doom-surface border border-doom-border rounded-lg p-3;
+  }
+
+  .btn-primary {
+    @apply bg-neon-green/10 text-neon-green border border-neon-green/30 rounded-lg px-4 py-2
+           font-medium hover:bg-neon-green/20 transition-all duration-200;
+  }
+
+  .btn-danger {
+    @apply bg-neon-pink/10 text-neon-pink border border-neon-pink/30 rounded-lg px-4 py-2
+           font-medium hover:bg-neon-pink/20 transition-all duration-200;
+  }
+}

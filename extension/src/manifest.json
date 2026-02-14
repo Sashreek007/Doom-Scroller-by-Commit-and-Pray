@@ -1,0 +1,52 @@
+{
+  "manifest_version": 3,
+  "name": "DoomScroller",
+  "version": "1.0.0",
+  "description": "Track your social media doomscrolling in meters. Compete with friends. Get roasted by AI.",
+  "permissions": [
+    "storage",
+    "alarms",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://www.instagram.com/*",
+    "https://x.com/*",
+    "https://twitter.com/*",
+    "https://www.tiktok.com/*",
+    "https://www.reddit.com/*",
+    "https://www.youtube.com/*",
+    "https://www.facebook.com/*"
+  ],
+  "background": {
+    "service_worker": "src/background/index.ts",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.instagram.com/*",
+        "https://x.com/*",
+        "https://twitter.com/*",
+        "https://www.tiktok.com/*",
+        "https://www.reddit.com/*",
+        "https://www.youtube.com/*",
+        "https://www.facebook.com/*"
+      ],
+      "js": ["src/content/tracker.ts"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "src/popup/index.html",
+    "default_icon": {
+      "16": "public/icons/icon-16.png",
+      "48": "public/icons/icon-48.png",
+      "128": "public/icons/icon-128.png"
+    }
+  },
+  "icons": {
+    "16": "public/icons/icon-16.png",
+    "48": "public/icons/icon-48.png",
+    "128": "public/icons/icon-128.png"
+  }
+}
