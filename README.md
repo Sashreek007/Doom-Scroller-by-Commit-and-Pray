@@ -1,104 +1,81 @@
-# 🤡🏆 **DoomScroller**
+# 🤡🏆 DoomScroller
 
-### **One-Sentence Value Proposition**
+We help people who lose hours on social feeds turn invisible doomscrolling into visible, trackable behavior using live distance tracking, social game mechanics, and AI-powered roast feedback.
 
-> We help **people who lose hours on social feeds** deal with **mindless doomscrolling and zero self-awareness of time spent** by **tracking real scroll distance live, turning it into coins/competitions, and adding AI-powered roast feedback**, resulting in **a fun, social, and brutally honest behavior mirror**.
-
-> **Disclaimer:** This browser extension may not work on managed office/school Wi-Fi (for example, UBS-like corporate networks) because DNS/content filtering can block Supabase auth and Edge Function domains (`*.supabase.co`), which breaks login and AI features. Also, for the extension to work reliably, aggressive browser tracking protection/shields should be turned off for this extension.
-
-**Checklist**
-
-* One sentence
-* Names the user
-* States outcome
-* Still understandable if the joke is removed
+> **Disclaimer:** This browser extension may not work on managed office/school Wi-Fi (for example, UBS-like corporate networks) because DNS/content filtering can block Supabase domains (`*.supabase.co`), which breaks login and AI features. For reliable behavior, aggressive browser tracking protection/shields should be turned off for this extension.
 
 ---
 
-## 🎥 **Live Demo**
-
-*(Judges look here first. This is non-negotiable.)*
+## 🎥 Live Demo
 
 * 🔗 **Live Application:** [ADD_URL_HERE]
 * 🎬 **Demo Video (60–90s):** [ADD_VIDEO_URL_HERE]
 
-**What the demo shows**
+---
 
-1. The problem in <5 seconds
-2. User input
-3. System response
-4. Why it’s funny / better / different
+## 😂 Why This Exists
+
+People spend a lot of time scrolling without any intuitive sense of how much they actually consumed. Existing wellness tools are usually passive and easy to ignore. We wanted a system that gives immediate, honest, and slightly chaotic feedback, while still being technically robust enough to support realtime game loops, social interactions, and AI features.
 
 ---
 
-## 😂 **Why This Exists**
+## 🎯 Target Users & Use Cases
 
-*(Problem Statement, but themed for a silly hackathon)*
+### Primary Users
 
-### The Problem We Are (Over-Dramatically) Solving
+* Students, professionals, and creators who use social feeds daily.
+* Users who want awareness/accountability but dislike preachy productivity UX.
 
-* People scroll for hours but have no intuitive sense of distance/time spent.
-* Existing “wellness” tools are passive, boring, and easy to ignore.
-* Most trackers show delayed stats, so feedback arrives too late to change behavior.
-* Social accountability is missing; habit change is harder alone.
-* AI assistants are usually generic and polite, not behavior-aware or memorable.
-* Corporate/school networks can silently block critical APIs, making “it works on my Wi-Fi” a real product issue.
+### Secondary Users
 
----
+* Friend groups that want lightweight competition around scrolling behavior.
 
-## 🎯 **Target Users & Use Cases**
+### Example Use Case
 
-### Who This Is For
-
-**Primary User**
-
-* Who they are: Students, early-career professionals, and creators who spend significant time on short-form/social feeds.
-* Situation they’re in: They want awareness/control but dislike preachy productivity apps.
-* How often this problem happens: Daily, usually multiple sessions per day.
-
-**Secondary User (Optional)**
-
-* Friends who want to compete in battle rooms and make scrolling visible/accountable.
-
-**Concrete Use Case**
-
-> A user opens YouTube after work “for 5 minutes,” keeps scrolling, and DoomScroller instantly increments today distance and coins locally. Their friends invite them to a battle room where they bet coins on a 20-second round. After the round ends, the winner/loser result appears directly on the webpage with confetti, and later the user asks AI Chat, “How cooked am I today?” to get a roast based only on their own behavior.
+A user opens YouTube for “a quick break,” starts scrolling, and sees distance/coins update immediately. They join a battle room via key, play a timed round with a coin bet, and get winner/loser feedback directly on the webpage. Later, they open AI Chat and ask for a roast that reflects only their own scrolling patterns.
 
 ---
 
-## 💡 **Solution Overview**
+## 💡 Solution Overview
 
-### What We Built
+DoomScroller is a Chrome extension that tracks scroll distance across selected social platforms and converts activity into a live meter, coin system, social competition, and AI interactions. The system uses local-first updates for instant UX and asynchronous cloud sync for persistence and multiplayer features. Users can search/add friends, compare world/friends leaderboard positions, join battle rooms, and interact with AI chat/achievement experiences tied to their behavior.  
 
-DoomScroller is a Chrome extension that tracks scrolling distance across selected social platforms and converts it into a live meter/coin system. It combines local-first runtime updates (for instant UI responsiveness) with async cloud sync to Supabase (for persistence, leaderboard, friends, and battles). Users can compete in real-time multiplayer battle rooms with timers, betting, and automatic payout settlement. The system also generates AI-enhanced achievements and provides an AI chat roast mode grounded in each user’s own doomscroll data.  
-We built this with a playful voice, but the underlying architecture is production-style: typed message contracts, RLS policies, migration-driven schema evolution, and resilient fallback paths.
-
-> **Key Differentiator:** This is not a static joke UI; it is a real-time behavior engine where tracking, multiplayer game logic, and AI outputs are all data-backed and user-specific.
+**Key Differentiator:** DoomScroller is not a static joke script; it is a real-time, data-backed extension where gameplay, stats, and AI behavior are integrated into one coherent loop.
 
 ---
 
-## ⚙️ **System Architecture**
+## 🔍 How It Works (Step by Step)
 
-### How It Works Under the Hood
+1. **Extension runs on supported social domains**  
+   A content script binds to the active scroll container (with rebinding for SPA page transitions) and tracks scroll deltas.
 
-**Inputs**
+2. **Scroll movement is converted into distance**  
+   Pixel deltas are converted to meters and flushed as runtime messages at short intervals.
 
-* Scroll deltas from content scripts on supported social domains
-* User auth/profile/friend/battle actions from popup UI
-* Chat prompts and achievement trigger events
+3. **Background service worker handles local-first updates**  
+   It validates site scope, aggregates unsynced batches, and serves immediate stats from local/cache state for fast UI response.
 
-**Processing**
+4. **Async backend sync persists data**  
+   Batched sessions are pushed to Supabase in the background, updating durable profile/session tables without blocking UX.
 
-* Content script normalizes scroll activity and flushes batched updates
-* Background service worker aggregates, validates, and applies local-first updates
-* Supabase sync layer persists sessions/profiles/rooms/relationships
-* Edge Functions generate AI responses/achievement content under JWT-scoped access
+5. **Coins are awarded from distance progression**  
+   Coin checkpoints are tracked and incremented as total distance crosses thresholds.
 
-**Outputs**
+6. **Battle rooms run timed multiplayer rounds**  
+   Users join with room keys, host configures bet/timer/game mode, and rounds run with shared timing plus live standings.
 
-* Real-time today/total distance and per-app breakdown
-* Coin earnings, battle timers/results, leaderboard updates
-* AI chat roasts and achievement metadata
+7. **Round settlement is server-authoritative**  
+   End-of-round logic computes winners, splits pot/payouts, writes result payload, and keeps players in the room for the next round.
+
+8. **Main-screen overlays deliver instant game feedback**  
+   During rounds, timer appears on the webpage; after settlement, winner/loser overlays (with confetti for winners) show directly on-page.
+
+9. **AI layer adds context-aware interaction**  
+   Edge Functions generate roast/chat and achievement enrichment from authenticated user context, with fallbacks if AI is unavailable.
+
+---
+
+## ⚙️ System Architecture
 
 ```text
 User Input
@@ -110,146 +87,142 @@ Supabase Sync + Edge Function Intelligence
 Popup UI + On-Page Overlays (timer, winner/loser, toasts)
 ```
 
-**Pipeline Notes**
+### Inputs
 
-* Local updates are shown immediately; cloud writes are async.
-* Message contracts are typed (`shared/messages.ts`) to keep popup/background/content behavior aligned.
-* Battle mode includes round state, settlement payloads, and replay-safe overlays.
+* Scroll events from supported social domains
+* Popup actions (auth, friends, rooms, settings, chat)
+* Battle/game actions and AI prompts
 
----
+### Processing
 
-## 🧠 **Core Technical Insight**
+* Content script captures scroll deltas and batches updates
+* Background service worker validates/aggregates events
+* Local cache updates UI immediately
+* Supabase sync writes durable state (profiles, sessions, friends, battles)
+* Edge Functions generate AI chat and achievement content
 
-### The Non-Obvious Engineering Decision
+### Outputs
 
-1. **Hardest technical problem:** Perceived lag was high at launch (users saw backend-bound delays of 10+ seconds), which made tracking feel broken.
-2. **Decision that solved it:** We switched to a **local-first cache-and-sync architecture**: update meters immediately in local runtime/cache, then sync batched data to Supabase in the background.
-3. **Why it matters:** This made the experience feel instant while preserving durable server-side truth for leaderboard, coins, friends, and battles.
-
-Additional hard problems and fixes:
-
-* **AI integration instability:** We added stricter token/session handling, edge-function contract checks, and fallbacks so UI does not hard-fail when AI is unavailable.
-* **DNS/network blocking issue:** On some managed networks, requests to Supabase domains were blocked. Solution: document the dependency, recommend domain allowlisting or alternate network, and provide graceful error handling/fallback behavior.
-* **New engineering practice tried:** We used **spec-driven development** for V2 features (contracts first, migration-first schema changes, then UI wiring), which reduced regressions while shipping fast.
-
----
-
-## 🤖 **How We Use AI to Enhance the Experience**
-
-### Why AI Is Essential (Not Just a Gimmick)
-
-**Why AI Is Needed**
-
-A pure rule-based system can assign static labels, but it cannot generate context-rich, user-specific roast/achievement language that stays fresh and engaging over repeated interactions.
-
-**What the AI Does**
-
-* Interprets user prompts in AI Chat using only that user’s context
-* Generates roast-style responses tied to individual scroll patterns
-* Enriches achievement content with dynamic title/description/tone
-* Adapts response style while preserving product constraints
-
-**The Intentional “Silly Constraint”**
-
-> The assistant is intentionally opinionated/roasty and behavior-focused, while still bounded by strict context isolation and response validation.
-
-**User Experience Impact**
-
-* Makes behavior feedback memorable instead of generic
-* Increases replay and engagement in chat/achievement loops
-* Turns passive tracking into an interactive experience
-
-**Technical Responsibility**
-
-AI calls run through controlled Edge Functions with JWT-derived identity, schema-validated outputs, and fallback responses to keep behavior predictable and safe.
+* Live today/total distance and per-app breakdown
+* Coin earnings and battle room updates
+* On-page timer + winner/loser overlay
+* AI roast responses and achievement metadata
 
 ---
 
-## ✨ **Key Features**
+## 🧠 Core Technical Insight
 
-### The Fun Stuff (That Actually Works)
+The hardest early issue was user-perceived latency: backend-dependent updates made the extension feel slow (10+ second delay in initial builds).  
 
-* **Local-First Doom Meter** – Scroll distance updates immediately in the UI, then syncs to cloud without blocking user feedback.
-* **Coins + Battle Rooms** – Users create/join rooms via key, set bets/timers, and run competitive rounds with automatic payout settlement.
-* **On-Page Game Overlay** – During rounds, users see timer and winner/loser feedback directly on the webpage (not only in popup).
-* **Social Layer (Friends + Leaderboards)** – Search/add/accept/remove friends, world/friends rankings, and request indicators.
-* **AI Roast + Achievements** – AI chat and achievement enrichment use user-specific doomscroll context for personalized responses.
+We solved this with a **local-first cache-and-sync model**:
 
----
+* Update meters/coins in local runtime immediately
+* Batch and sync to backend asynchronously
+* Merge local unsynced state with DB-backed stats in reads
 
-## 🧪 **Validation & Results**
+This kept UX fast while preserving server-side consistency for leaderboard, friends, battles, and persistence.
 
-### Proof This Isn’t Just a Meme
+Additional engineering challenges we solved:
 
-* Internal manual testing with multiple accounts/room participants validated end-to-end flow: tracking → coins → battle settlement → UI overlays.
-* Before/after latency improvement: perceived metric updates moved from backend-lagged behavior (10s+ in early builds) to near-instant local UI updates.
-* Realtime room behavior validated with host transfer, kick handling, and persistent room membership across popup reopen.
-* AI fallback behavior validated so chat/achievement UX degrades gracefully when external AI service/network is unavailable.
+* **AI integration reliability:** added stronger auth/session handling and fallback behavior so the app still works when AI is unavailable.
+* **DNS/network blocking in managed environments:** documented constraints, added clearer errors, and validated alternative-network guidance.
+* **Spec-driven development:** for V2, we used contract-first + migration-first implementation to reduce regressions while shipping features quickly.
 
 ---
 
-## 🏆 **Why This Project Wins**
+## 🤖 How We Use AI to Enhance the Experience
 
-### Judge-Facing Justification
+AI is used where static rules alone would feel repetitive:
 
-* It strongly matches a silly/entertainment hackathon theme while remaining technically real.
-* The humor is layered on top of concrete engineering: typed contracts, migrations, RLS, realtime, caching, and async pipelines.
-* It has a clear live demo arc: track, compete, settle, roast.
-* It is memorable because users get immediate visual feedback and social game loops, not just a dashboard.
+* Personalized roast/chat responses from a user’s own doomscroll context
+* Achievement text enrichment with dynamic tone and context
+
+Why this is not a gimmick:
+
+* Rule-only systems can score behavior, but they cannot sustain varied, context-aware interaction quality.
+* AI responses increase replay value and make feedback memorable.
+
+Safety/control approach:
+
+* JWT-scoped identity in Edge Functions
+* Structured output constraints and validation
+* Graceful fallback responses when AI/network fails
+* No cross-user leakage in user-level context flows
 
 ---
 
-## 🔐 **Privacy & Data Handling**
+## ✨ Key Features
 
-### How We Treat User Data
+* **Local-First Doom Meter** – Distance updates instantly, then syncs in background.
+* **Coins + Battle Rooms** – Room key join flow, bets, timers, and automated coin settlement.
+* **On-Page Battle Overlay** – Timer and winner/loser visuals appear directly on the webpage during/after rounds.
+* **Friends + Leaderboards** – Search/add/accept/remove friends and compare world/friends ranks.
+* **AI Roast + Achievements** – User-specific chat/achievement enrichment tied to scrolling behavior.
 
-**What Data We Access**
+---
+
+## 🧪 Validation & Results
+
+* End-to-end manual testing with multiple accounts validated tracking → coins → battle → settlement flow.
+* Perceived update latency improved from backend-lagged behavior (10s+) to near-instant local updates.
+* Realtime room behavior validated for joins/leaves, host transfer, and persistent membership across popup reopen.
+* AI fallback behavior verified so chat/achievement UX degrades gracefully instead of hard failing.
+
+---
+
+## 🏆 Why DoomScroller Stands Out
+
+* Strongly aligned with a playful hackathon theme, while technically real under the hood.
+* Combines realtime extension architecture, multiplayer game logic, and AI interaction in one product.
+* Demo is easy to understand and memorable: track → compete → settle → roast.
+
+---
+
+## 🔐 Privacy & Data Handling
+
+### Data Access
 
 * Auth identity (Supabase user)
 * Profile data (username, display name, avatar, visibility)
-* Scroll session metrics (site key, meters/pixels, timestamps, duration)
-* Social graph data (friend requests/relationships)
-* Battle/game metadata (room membership, bets, results)
-* Chat messages (user + assistant)
+* Scroll session metrics (site key, distance, timestamps, duration)
+* Friendship/request state
+* Battle metadata and round outcomes
+* Chat message content
 
-**How Data Is Used**
+### Data Usage
 
-* Used for tracking stats, battles, social features, and user-specific AI responses
-* Not used for ad targeting or cross-user content leakage in AI prompts
+* Used only for tracking, social gameplay, and user-specific AI features
+* Not used for ad targeting
 
-**Storage & Retention**
+### Storage
 
-* Runtime cache: `chrome.storage.local` for fast UX and resilience
-* Persistent storage: Supabase Postgres tables and edge function logs per project settings
-* Retention policy can be adjusted by product policy / DB cleanup jobs
+* Local runtime cache in `chrome.storage.local`
+* Persistent backend storage in Supabase Postgres
 
-**Third-Party Services**
+### Third-Party Services
 
-* Supabase (Auth, Postgres, Realtime, Edge Functions)
-* Gemini API (invoked from Edge Functions; key stored as Supabase secret)
+* Supabase (Auth, DB, Realtime, Edge Functions)
+* Gemini API via Supabase Edge Functions
 
-**User Control**
+### User Control
 
-* Users can sign out and clear extension storage
-* Profile visibility toggle available
-* Team can provide account/data deletion path via backend admin workflow
-
----
-
-## 🛠️ **Tech Stack**
-
-### Tools Used
-
-* **Frontend:** React + TypeScript + TailwindCSS (Chrome extension popup UI)
-* **Backend:** Supabase Postgres + RLS + Realtime + Edge Functions
-* **AI / ML:** Gemini (via Supabase Edge Functions)
-* **Infrastructure:** Chrome Extension MV3 (service worker + content scripts), Vite build pipeline
+* Sign out support
+* Profile visibility control
+* Extension storage can be cleared by user
 
 ---
 
-## ⚡ **Setup & Run Locally**
+## 🛠️ Tech Stack
 
-### How to Run This Project
+* **Frontend:** React, TypeScript, TailwindCSS
+* **Backend:** Supabase Postgres, RLS, Realtime, Edge Functions
+* **AI:** Gemini (through Edge Functions)
+* **Extension Platform:** Chrome Extension MV3 (service worker + content scripts)
+* **Build Tooling:** Vite
+
+---
+
+## ⚡ Setup & Run Locally
 
 ```bash
 git clone [repo-url]
@@ -264,21 +237,21 @@ VITE_SUPABASE_URL=https://your-project.supabase.co
 VITE_SUPABASE_ANON_KEY=your-anon-key
 ```
 
-Build extension:
+Build the extension:
 
 ```bash
 cd extension
 npm run build
 ```
 
-Load extension in browser:
+Load in browser:
 
 1. Open `chrome://extensions`
-2. Enable **Developer mode**
-3. Click **Load unpacked**
+2. Enable Developer mode
+3. Click Load unpacked
 4. Select `/Users/sashreek/Documents/doomscroller/extension/dist`
 
-Optional backend setup (if running your own Supabase project):
+Optional backend setup:
 
 ```bash
 cd /Users/sashreek/Documents/doomscroller
@@ -291,30 +264,24 @@ npx supabase@latest functions deploy chatbot --use-api
 
 ---
 
-## 🚀 **Future Roadmap**
+## 🚀 Future Roadmap
 
-### Where This Could Go Next
-
-* Add additional battle game modes with deterministic scoring contracts and anti-cheat telemetry.
-* Add weekly seasonal ladders and coin sinks (cosmetics/badge frames) to deepen retention loops.
-* Add user-controlled AI persona presets (roast intensity + coaching mode) with strict privacy boundaries.
+* Add more battle modes with deterministic scoring and anti-cheat telemetry.
+* Add seasonal progression/coin sinks for deeper retention.
+* Add configurable AI personalities (roast intensity vs coaching mode).
 
 ---
 
-## ⚠️ **Limitations & Risks**
+## ⚠️ Limitations & Risks
 
-### Known Constraints
-
-* Managed networks with strict DNS/content filtering can block Supabase domains and break auth/AI endpoints.
-* Browser privacy/tracking protections may interfere with extension auth/session persistence if too strict.
-* Scroll tracking is domain-scoped to supported sites and depends on content-script execution contexts.
-* Realtime UX still depends on background worker lifecycle and browser extension constraints.
+* Managed networks can block Supabase DNS/domains and break auth/AI.
+* Strict browser privacy/shield settings can interfere with extension session behavior.
+* Tracking is limited to supported social domains and extension execution contexts.
+* Realtime quality still depends on browser extension service worker lifecycle.
 
 ---
 
-## 🧑‍🤝‍🧑 **Team**
-
-### Who Built This
+## 🧑‍🤝‍🧑 Team
 
 * [NAME_1] — [ROLE] — [CONTRIBUTION]
 * [NAME_2] — [ROLE] — [CONTRIBUTION]
@@ -323,20 +290,6 @@ npx supabase@latest functions deploy chatbot --use-api
 
 ---
 
-## 📜 **License (Optional)**
+## 📜 License
 
 [ADD_LICENSE_HERE]
-
----
-
-# 🔥 FINAL CHECKLIST (DO NOT IGNORE)
-
-Your README must:
-
-* Have a demo near the top
-* Explain *why* AI is used
-* Show at least one real technical insight
-* Balance humor with clarity
-* Respect privacy even in a joke project
-
-If you do all that, **your README will be top-tier**.
