@@ -24,6 +24,8 @@ interface BattleRoomRow {
   bet_coins: number;
   timer_seconds: number;
   selected_game_type: GameTypeKey | null;
+  round_started_at: string | null;
+  round_ends_at: string | null;
   max_players: number;
   created_at: string;
   updated_at: string;
@@ -62,6 +64,7 @@ const ROOM_KEY_LENGTH = 6;
 const JOIN_KEY_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const DB_REFRESH_DEBOUNCE_MS = 120;
 const ROOM_POLL_INTERVAL_MS = 1200;
+const PRESTART_SECONDS = 8;
 
 const GAME_OPTIONS: BattleGameOption[] = [
   {
@@ -83,6 +86,24 @@ const GAME_OPTIONS: BattleGameOption[] = [
     details: 'Only one selected app counts.',
   },
 ];
+
+const GAME_RULES: Record<GameTypeKey, string[]> = {
+  scroll_sprint: [
+    'Scroll as much as possible before timer ends.',
+    'Highest distance wins the pot.',
+    'Tie splits coins evenly.',
+  ],
+  target_chase: [
+    'Try to finish closest to the target distance.',
+    'Overshoot and undershoot both count.',
+    'Closest distance wins.',
+  ],
+  app_lockdown: [
+    'Only the selected app contributes distance.',
+    'Cross-app scrolling does not score.',
+    'Highest valid distance wins.',
+  ],
+};
 
 function normalizeRoomKey(value: string): string {
   return value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, ROOM_KEY_LENGTH);
@@ -114,6 +135,14 @@ function getGameLabel(gameType: GameTypeKey | null): string {
   return option?.title ?? gameType;
 }
 
+function formatCountdownFromMs(ms: number): string {
+  const safeMs = Math.max(0, ms);
+  const totalSeconds = Math.ceil(safeMs / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+}
+
 function parseDbError(error: PostgrestError | null): string {
   if (!error) return 'Unexpected database error';
   if (error.code === '42P01') return 'Battle tables are not deployed yet. Run latest migration.';
@@ -141,6 +170,7 @@ export default function Battle({
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [nowTs, setNowTs] = useState(() => Date.now());
 
   const refreshTimeoutRef = useRef<number | null>(null);
   const roomSubRef = useRef<RealtimeChannel | null>(null);
@@ -152,6 +182,18 @@ export default function Battle({
   const rankedPlayers = useMemo(() => rankPlayersByJoinTime(players), [players]);
   const roomIsFull = rankedPlayers.length >= maxPlayers;
   const canStart = isHost && room?.status === 'lobby' && rankedPlayers.length >= 2;
+  const selectedRules = room?.selected_game_type ? GAME_RULES[room.selected_game_type] : [];
+  const roundStartsAtMs = room?.round_started_at ? new Date(room.round_started_at).getTime() : null;
+  const roundEndsAtMs = room?.round_ends_at ? new Date(room.round_ends_at).getTime() : null;
+  const isPrestartPhase = room?.status === 'active' && roundStartsAtMs != null && nowTs < roundStartsAtMs;
+  const isRoundLive = room?.status === 'active'
+    && roundStartsAtMs != null
+    && roundEndsAtMs != null
+    && nowTs >= roundStartsAtMs
+    && nowTs < roundEndsAtMs;
+  const isRoundComplete = room?.status === 'active' && roundEndsAtMs != null && nowTs >= roundEndsAtMs;
+  const prestartRemainingMs = isPrestartPhase && roundStartsAtMs != null ? roundStartsAtMs - nowTs : 0;
+  const roundRemainingMs = isRoundLive && roundEndsAtMs != null ? roundEndsAtMs - nowTs : 0;
 
   const clearRoomState = useCallback(() => {
     setRoom(null);
@@ -368,6 +410,16 @@ export default function Battle({
       window.clearInterval(interval);
     };
   }, [refreshRoom, room?.id]);
+
+  useEffect(() => {
+    if (room?.status !== 'active') return;
+    const interval = window.setInterval(() => {
+      setNowTs(Date.now());
+    }, 250);
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [room?.status]);
 
   const createRoom = useCallback(async () => {
     setJoining(true);
@@ -602,13 +654,28 @@ export default function Battle({
     setWorking(true);
     setError(null);
     try {
+      const nextBetCoins = patch.bet_coins ?? room.bet_coins;
+      const nextTimerSeconds = patch.timer_seconds ?? room.timer_seconds;
+      const nextSelectedGameType = Object.prototype.hasOwnProperty.call(patch, 'selected_game_type')
+        ? patch.selected_game_type
+        : room.selected_game_type;
+      const nextStatus = patch.status ?? room.status;
+      const nextRoundStartedAt = Object.prototype.hasOwnProperty.call(patch, 'round_started_at')
+        ? patch.round_started_at
+        : room.round_started_at;
+      const nextRoundEndsAt = Object.prototype.hasOwnProperty.call(patch, 'round_ends_at')
+        ? patch.round_ends_at
+        : room.round_ends_at;
+
       const { error: updateError } = await supabase
         .from('battle_rooms')
         .update({
-          bet_coins: patch.bet_coins ?? room.bet_coins,
-          timer_seconds: patch.timer_seconds ?? room.timer_seconds,
-          selected_game_type: patch.selected_game_type ?? room.selected_game_type,
-          status: patch.status ?? room.status,
+          bet_coins: nextBetCoins,
+          timer_seconds: nextTimerSeconds,
+          selected_game_type: nextSelectedGameType,
+          status: nextStatus,
+          round_started_at: nextRoundStartedAt,
+          round_ends_at: nextRoundEndsAt,
         })
         .eq('id', room.id);
 
@@ -632,6 +699,33 @@ export default function Battle({
       setError('Could not copy key. Copy manually.');
     }
   };
+
+  const handleStartRound = useCallback(async () => {
+    if (!room || !isHost) return;
+    if (!room.selected_game_type) {
+      setError('Host must select a game type first.');
+      return;
+    }
+
+    const startAt = Date.now() + PRESTART_SECONDS * 1000;
+    const endAt = startAt + room.timer_seconds * 1000;
+
+    await updateRoomSetup({
+      status: 'active',
+      round_started_at: new Date(startAt).toISOString(),
+      round_ends_at: new Date(endAt).toISOString(),
+    });
+    setInfo(`Round starts in ${PRESTART_SECONDS}s. Read the rules.`);
+  }, [isHost, room, updateRoomSetup]);
+
+  const handleBackToGameSelect = useCallback(async () => {
+    if (!room || !isHost) return;
+    await updateRoomSetup({
+      status: 'game_select',
+      round_started_at: null,
+      round_ends_at: null,
+    });
+  }, [isHost, room, updateRoomSetup]);
 
   if (loadingRoom) {
     return (
@@ -816,7 +910,12 @@ export default function Battle({
               {isHost ? (
                 <button
                   onClick={() => {
-                    void updateRoomSetup({ status: 'game_select', selected_game_type: null });
+                    void updateRoomSetup({
+                      status: 'game_select',
+                      selected_game_type: null,
+                      round_started_at: null,
+                      round_ends_at: null,
+                    });
                   }}
                   disabled={!canStart || working}
                   className="btn-primary w-full text-sm disabled:opacity-50"
@@ -866,12 +965,87 @@ export default function Battle({
 
               {room.selected_game_type && (
                 <div className="mt-3 rounded-lg border border-neon-green/35 bg-neon-green/10 px-3 py-2">
-                  <p className="text-neon-green text-xs font-mono uppercase tracking-wider">
-                    Selected: {getGameLabel(room.selected_game_type)}
+                  <p className="text-neon-green text-xs font-mono uppercase tracking-wider mb-1">
+                    Rules: {getGameLabel(room.selected_game_type)}
                   </p>
-                  <p className="text-[11px] text-doom-muted mt-1">
-                    Gameplay for this mode will be wired next.
+                  <ul className="space-y-1">
+                    {selectedRules.map((rule) => (
+                      <li key={rule} className="text-[11px] text-doom-muted">
+                        • {rule}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {isHost && room.selected_game_type && (
+                <button
+                  onClick={() => {
+                    void handleStartRound();
+                  }}
+                  disabled={working}
+                  className="btn-primary w-full text-sm mt-3 disabled:opacity-60"
+                >
+                  Start Round
+                </button>
+              )}
+            </div>
+          )}
+
+          {room.status === 'active' && (
+            <div className="card">
+              <p className="text-neon-green text-xs font-mono uppercase tracking-wider mb-2">
+                {room.selected_game_type ? `${getGameLabel(room.selected_game_type)} • Round Live` : 'Round Live'}
+              </p>
+
+              {room.selected_game_type && (
+                <div className="rounded-lg border border-doom-border bg-doom-bg/50 px-3 py-2 mb-3">
+                  <p className="text-doom-muted text-[11px] font-mono uppercase tracking-wider mb-1">Rules</p>
+                  <ul className="space-y-1">
+                    {selectedRules.map((rule) => (
+                      <li key={rule} className="text-[11px] text-doom-muted">
+                        • {rule}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {isPrestartPhase && (
+                <div className="rounded-lg border border-neon-cyan/45 bg-neon-cyan/10 px-3 py-3 text-center">
+                  <p className="text-neon-cyan text-[11px] font-mono uppercase tracking-wider">Starting in</p>
+                  <p className="text-3xl font-mono font-bold text-neon-cyan mt-1">
+                    {formatCountdownFromMs(prestartRemainingMs)}
                   </p>
+                  <p className="text-[11px] text-doom-muted mt-1">Read rules now. Round starts automatically.</p>
+                </div>
+              )}
+
+              {isRoundLive && (
+                <div className="rounded-lg border border-neon-green/45 bg-neon-green/10 px-3 py-3 text-center">
+                  <p className="text-neon-green text-[11px] font-mono uppercase tracking-wider">Time left</p>
+                  <p className="text-4xl font-mono font-bold neon-text-green mt-1">
+                    {formatCountdownFromMs(roundRemainingMs)}
+                  </p>
+                </div>
+              )}
+
+              {isRoundComplete && (
+                <div className="rounded-lg border border-neon-pink/40 bg-neon-pink/10 px-3 py-3">
+                  <p className="text-neon-pink text-sm font-mono">Round complete.</p>
+                  {isHost ? (
+                    <button
+                      onClick={() => {
+                        void handleBackToGameSelect();
+                      }}
+                      className="btn-primary w-full text-sm mt-2 disabled:opacity-60"
+                      disabled={working}
+                    >
+                      Back To Game Select
+                    </button>
+                  ) : (
+                    <p className="text-[11px] text-doom-muted mt-1">Waiting for host to set the next round.</p>
+                  )}
                 </div>
               )}
             </div>
