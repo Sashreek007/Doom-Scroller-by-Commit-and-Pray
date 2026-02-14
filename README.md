@@ -1,6 +1,6 @@
 # 🤡🏆 DoomScroller
 
-We help people who lose hours on social feeds turn invisible doomscrolling into visible, trackable behavior using live distance tracking, social game mechanics, and AI-powered roast feedback.
+We help people who lose hours on social feeds turn invisible doomscrolling into visible, trackable behavior by converting raw scroll movement into real distance (meters), then turning that distance into coins, battles, and AI-powered roast feedback.
 
 > **Disclaimer:** This browser extension may not work on managed office/school Wi-Fi (for example, UWS-like corporate networks) because DNS/content filtering can block Supabase domains (`*.supabase.co`), which breaks login and AI features. Practical workaround: switch to a personal mobile hotspot (or another unfiltered network). For reliable behavior, aggressive browser tracking protection/shields should be turned off for this extension.
 
@@ -64,7 +64,7 @@ A user opens YouTube for “a quick break,” starts scrolling, and sees distanc
 
 ## 💡 Solution Overview
 
-DoomScroller is a Chrome extension that tracks scroll distance across selected social platforms and converts activity into a live meter, coin economy, social competition, and AI interactions. The system uses local-first updates for instant UX and asynchronous cloud sync for persistence and multiplayer features. In the Battle tab, a host creates a room and shares a short room code; other users join with that code, lock into the same lobby, and play timed coin-bet rounds. Users can search/add friends, compare world/friends leaderboard positions, run battles, and interact with AI chat/achievement experiences tied to their behavior. The AI is personalized: it roasts based on your own usage patterns, not generic canned text.  
+DoomScroller is a Chrome extension that tracks scroll distance across selected social platforms and converts activity into a live meter (in meters), coin economy, social competition, and AI interactions. The system uses local-first updates for instant UX and asynchronous cloud sync for persistence and multiplayer features. In the Battle tab, a host creates a room and shares a short room code; other users join with that code, lock into the same lobby, and play timed coin-bet rounds. Coin economy is simple and transparent: users earn **1 coin for every 20 meters scrolled**, then use those coins to place battle bets. Users can search/add friends, compare world/friends leaderboard positions, run battles, and interact with AI chat/achievement experiences tied to their behavior. The AI is personalized: it roasts based on your own usage patterns, not generic canned text.  
 
 **Key Differentiator:** DoomScroller is not a static joke script; it is a real-time, data-backed extension where gameplay, stats, and AI behavior are integrated into one coherent loop.
 
@@ -75,8 +75,8 @@ DoomScroller is a Chrome extension that tracks scroll distance across selected s
 1. **Extension runs on supported social domains**  
    A content script binds to the active scroll container (with rebinding for SPA page transitions) and tracks scroll deltas.
 
-2. **Scroll movement is converted into distance**  
-   Pixel deltas are converted to meters and flushed as runtime messages at short intervals.
+2. **Scroll movement is converted into real distance (meters)**  
+   Pixel deltas are converted using a fixed CSS-pixel-to-meter conversion, so tracking is standardized and shown as distance rather than arbitrary points.
 
 3. **Background service worker handles local-first updates**  
    It validates site scope, aggregates unsynced batches, and serves immediate stats from local/cache state for fast UI response.
@@ -85,7 +85,7 @@ DoomScroller is a Chrome extension that tracks scroll distance across selected s
    Batched sessions are pushed to Supabase in the background, updating durable profile/session tables without blocking UX.
 
 5. **Coins are awarded from distance progression**  
-   Coin checkpoints are tracked and incremented as total distance crosses thresholds.
+   Economy rule: **1 coin per 20 meters**. Coin checkpoints are tracked and incremented as distance crosses each 20m threshold.
 
 6. **Battle rooms are created/joined by short room code**  
    Host generates a 6-character room code, shares it, and players join with that exact code into the same lobby.
@@ -95,7 +95,7 @@ DoomScroller is a Chrome extension that tracks scroll distance across selected s
    * **Target Chase:** closest to a generated target distance wins (overshoot/undershoot allowed).
 
 8. **Round settlement is server-authoritative**  
-   End-of-round logic computes winners, splits pot/payouts, writes result payload, updates coin balances, and keeps players in the room for the next round.
+   End-of-round logic computes winners, settles the bet pot, writes result payload, updates coin balances (winner/loser), and keeps players in the room for the next round.
 
 9. **Main-screen overlays deliver instant game feedback**  
    During rounds, timer appears on the webpage; after settlement, winner/loser overlays (with confetti for winners) show directly on-page.
@@ -135,7 +135,7 @@ Popup UI + On-Page Overlays (timer, winner/loser, toasts)
 ### Outputs
 
 * Live today/total distance and per-app breakdown
-* Coin earnings, battle room state, and round results
+* Coin earnings (`1 coin / 20m`), battle room state, and round results
 * On-page timer + winner/loser overlay
 * AI roast responses and achievement metadata
 
@@ -199,10 +199,10 @@ Safety/control approach:
 ## ✨ Key Features
 
 * **Local-First Doom Meter + Per-App Breakdown**  
-  Scroll distance updates immediately from local cache so users do not wait on backend round-trips; unsynced deltas are merged with server stats for smooth totals.
+  Scroll distance updates immediately from local cache so users do not wait on backend round-trips; unsynced deltas are merged with server stats for smooth totals. Tracking is distance-based and displayed in meters.
 
 * **Room-Code Multiplayer Battle System**  
-  Host creates a battle room and gets a 6-character code. Other players join with that code, enter the same lobby, and remain in-room across popup close/reopen.
+  Host creates a battle room and gets a 6-character code. Other players join with that code, enter the same lobby, and remain in-room across popup close/reopen. Bets are placed in coins before each round.
 
 * **Battle Tracker Game Mode 1: Scroll Sprint**  
   Pure speed mode. Players scroll during the shared timer, and the highest round distance wins the pot.
@@ -214,7 +214,7 @@ Safety/control approach:
   During rounds, users get a timer overlay directly on the social page; after settlement, winner/loser results appear on-page, with confetti for winners.
 
 * **Coins, Friends, and Leaderboards**  
-  Coin balances update with distance and battle payouts; friends can send/accept requests and compare standings via friends/world leaderboards.
+  Users earn **1 coin per 20 meters** scrolled, then spend coins as battle bets. Coin balances also update from battle payouts; friends can send/accept requests and compare standings via friends/world leaderboards.
 
 * **AI Roast + AI-Enriched Achievements**  
   Chat and achievement text are generated from each user’s own activity profile (app usage mix, recent sessions, behavior patterns), so feedback is context-relevant instead of generic, with fallback handling when AI services are unreachable.
