@@ -7,6 +7,7 @@ import Dashboard from './pages/Dashboard';
 import Profile from './pages/Profile';
 import Friends from './pages/Friends';
 import Leaderboard from './pages/Leaderboard';
+import Settings from './pages/Settings';
 import BottomNav from './components/BottomNav';
 
 function App() {
