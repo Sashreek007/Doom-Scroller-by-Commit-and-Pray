@@ -25,6 +25,7 @@ interface BattleRoomRow {
   bet_coins: number;
   timer_seconds: number;
   selected_game_type: GameTypeKey | null;
+  round_target_meters: number | null;
   round_started_at: string | null;
   round_ends_at: string | null;
   round_result: unknown | null;
@@ -64,6 +65,8 @@ interface BattleRoundResult {
   winnerIds: string[];
   payouts: Record<string, number>;
   scores: Record<string, number>;
+  targetMeters?: number | null;
+  offBy?: Record<string, number> | null;
 }
 
 interface BattleGameOption {
@@ -170,6 +173,8 @@ function parseRoundResult(value: unknown): BattleRoundResult | null {
   const winnerIdsRaw = Array.isArray(row.winnerIds) ? row.winnerIds : [];
   const payoutsRaw = row.payouts && typeof row.payouts === 'object' ? row.payouts as Record<string, unknown> : {};
   const scoresRaw = row.scores && typeof row.scores === 'object' ? row.scores as Record<string, unknown> : {};
+  const offByRaw = row.offBy && typeof row.offBy === 'object' ? row.offBy as Record<string, unknown> : {};
+  const targetMetersRaw = Number(row.targetMeters);
 
   if (!settledAt || !Number.isFinite(pot) || !Number.isFinite(betCoins)) return null;
 
@@ -188,6 +193,12 @@ function parseRoundResult(value: unknown): BattleRoundResult | null {
     if (Number.isFinite(parsed)) scores[key] = parsed;
   }
 
+  const offBy: Record<string, number> = {};
+  for (const [key, raw] of Object.entries(offByRaw)) {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed)) offBy[key] = parsed;
+  }
+
   return {
     settledAt,
     pot: Math.max(0, Math.floor(pot)),
@@ -195,6 +206,8 @@ function parseRoundResult(value: unknown): BattleRoundResult | null {
     winnerIds,
     payouts,
     scores,
+    targetMeters: Number.isFinite(targetMetersRaw) ? targetMetersRaw : null,
+    offBy: Object.keys(offBy).length > 0 ? offBy : null,
   };
 }
 
@@ -273,14 +286,31 @@ export default function Battle({
   const prestartRemainingMs = isPrestartPhase && roundStartsAtMs != null ? roundStartsAtMs - nowTs : 0;
   const roundRemainingMs = isRoundLive && roundEndsAtMs != null ? roundEndsAtMs - nowTs : 0;
   const liveStandings = useMemo(() => {
-    if (room?.selected_game_type !== 'scroll_sprint') return [] as Array<{ userId: string; score: number }>;
-    return [...rankedPlayers]
-      .map((player) => ({
-        userId: player.userId,
-        score: Math.max(0, Number(player.totalMeters) - Number(player.roundStartMeters)),
-      }))
-      .sort((left, right) => right.score - left.score);
-  }, [rankedPlayers, room?.selected_game_type]);
+    if (!room?.selected_game_type) return [] as Array<{ userId: string; score: number; offBy: number | null }>;
+    const targetMeters = Number(room.round_target_meters ?? 0);
+    const byDistance = room.selected_game_type === 'target_chase';
+
+    const rows = [...rankedPlayers]
+      .map((player) => {
+        const score = Math.max(0, Number(player.totalMeters) - Number(player.roundStartMeters));
+        return {
+          userId: player.userId,
+          score,
+          offBy: byDistance ? Math.abs(score - targetMeters) : null,
+        };
+      });
+
+    if (byDistance) {
+      return rows.sort((left, right) => {
+        const leftOffBy = left.offBy ?? Number.POSITIVE_INFINITY;
+        const rightOffBy = right.offBy ?? Number.POSITIVE_INFINITY;
+        if (leftOffBy !== rightOffBy) return leftOffBy - rightOffBy;
+        return right.score - left.score;
+      });
+    }
+
+    return rows.sort((left, right) => right.score - left.score);
+  }, [rankedPlayers, room?.round_target_meters, room?.selected_game_type]);
 
   const clearRoomState = useCallback(() => {
     setRoom(null);
@@ -801,6 +831,9 @@ export default function Battle({
       const nextRoundEndsAt = Object.prototype.hasOwnProperty.call(patch, 'round_ends_at')
         ? patch.round_ends_at
         : room.round_ends_at;
+      const nextRoundTargetMeters = Object.prototype.hasOwnProperty.call(patch, 'round_target_meters')
+        ? patch.round_target_meters
+        : room.round_target_meters;
 
       const { error: updateError } = await supabase
         .from('battle_rooms')
@@ -811,6 +844,7 @@ export default function Battle({
           status: nextStatus,
           round_started_at: nextRoundStartedAt,
           round_ends_at: nextRoundEndsAt,
+          round_target_meters: nextRoundTargetMeters,
         })
         .eq('id', room.id);
 
@@ -865,6 +899,7 @@ export default function Battle({
       status: 'game_select',
       round_started_at: null,
       round_ends_at: null,
+      round_target_meters: null,
     });
   }, [isHost, room, updateRoomSetup]);
 
@@ -1091,6 +1126,7 @@ export default function Battle({
                       selected_game_type: null,
                       round_started_at: null,
                       round_ends_at: null,
+                      round_target_meters: null,
                     });
                   }}
                   disabled={!canStart || working}
@@ -1171,6 +1207,23 @@ export default function Battle({
                       {Number(latestRoundResult.payouts[userId] ?? 0) >= 0 ? '+' : ''}{Math.floor(Number(latestRoundResult.payouts[userId] ?? 0))} coins
                     </span>
                   </p>
+                  {Number.isFinite(Number(latestRoundResult.targetMeters ?? NaN)) && (
+                    <p className="text-[11px] text-doom-muted mt-0.5">
+                      Target:{' '}
+                      <span className="text-neon-cyan">
+                        {formatMeters(Number(latestRoundResult.targetMeters ?? 0))}
+                      </span>
+                      {latestRoundResult.offBy && Number.isFinite(Number(latestRoundResult.offBy[userId] ?? NaN)) && (
+                        <>
+                          {' '}• You were{' '}
+                          <span className="text-white">
+                            {formatMeters(Number(latestRoundResult.offBy[userId] ?? 0))}
+                          </span>
+                          {' '}off
+                        </>
+                      )}
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -1226,7 +1279,17 @@ export default function Battle({
                 </div>
               )}
 
-              {room.selected_game_type === 'scroll_sprint' && liveStandings.length > 0 && (
+              {room.selected_game_type === 'target_chase' && Number.isFinite(Number(room.round_target_meters ?? NaN)) && (
+                <div className="rounded-lg border border-neon-cyan/45 bg-neon-cyan/10 px-3 py-2 mt-3 text-center">
+                  <p className="text-neon-cyan text-[11px] font-mono uppercase tracking-wider">Target distance</p>
+                  <p className="text-2xl font-mono font-bold text-neon-cyan mt-1">
+                    {formatMeters(Number(room.round_target_meters ?? 0))}
+                  </p>
+                  <p className="text-[11px] text-doom-muted mt-1">Closest player wins this round.</p>
+                </div>
+              )}
+
+              {(room.selected_game_type === 'scroll_sprint' || room.selected_game_type === 'target_chase') && liveStandings.length > 0 && (
                 <div className="rounded-lg border border-doom-border bg-doom-bg/40 p-2 mt-3">
                   <p className="text-doom-muted text-[11px] font-mono uppercase tracking-wider mb-1">
                     Live standings
@@ -1244,9 +1307,17 @@ export default function Battle({
                           <span className={`${isMe ? 'text-neon-green' : 'text-white'}`}>
                             #{index + 1} {player.displayName}{isMe ? ' (You)' : ''}
                           </span>
-                          <span className="font-mono tabular-nums text-doom-muted">
-                            {formatMeters(entry.score)}
-                          </span>
+                          {room.selected_game_type === 'target_chase' ? (
+                            <span className="font-mono tabular-nums text-doom-muted text-right">
+                              {formatMeters(entry.score)}
+                              {' '}• off{' '}
+                              {formatMeters(Number(entry.offBy ?? 0))}
+                            </span>
+                          ) : (
+                            <span className="font-mono tabular-nums text-doom-muted">
+                              {formatMeters(entry.score)}
+                            </span>
+                          )}
                         </div>
                       );
                     })}

@@ -38,41 +38,44 @@ async function getActiveUserId(): Promise<string | null> {
 
 async function fetchBattleTimerFromDb(userId: string): Promise<GetBattleTimerResponse> {
   const supabase = getSupabase();
-  const { data: membership, error: membershipError } = await supabase
+  const { data: memberships, error: membershipError } = await supabase
     .from('battle_room_members')
     .select('room_id, joined_at')
     .eq('user_id', userId)
     .eq('status', 'joined')
     .order('joined_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .limit(12);
 
   if (membershipError) return { active: false };
-  if (!membership?.room_id) return { active: false };
+  const roomIds = (memberships ?? [])
+    .map((row) => row.room_id as string | null)
+    .filter((value): value is string => Boolean(value));
+  if (roomIds.length === 0) return { active: false };
 
-  const { data: room, error: roomError } = await supabase
+  const { data: rooms, error: roomError } = await supabase
     .from('battle_rooms')
     .select('id, room_key, status, selected_game_type, round_started_at, round_ends_at, timer_seconds')
-    .eq('id', membership.room_id)
-    .maybeSingle();
+    .in('id', roomIds)
+    .order('round_ends_at', { ascending: false, nullsFirst: false });
 
-  if (roomError || !room) return { active: false };
-  if (
-    room.status !== 'active'
-    || !room.round_started_at
-    || !room.round_ends_at
-  ) {
-    return { active: false };
-  }
+  if (roomError || !rooms || rooms.length === 0) return { active: false };
+
+  const nowMs = Date.now();
+  const activeRoom = rooms.find((room) => {
+    if (room.status !== 'active' || !room.round_started_at || !room.round_ends_at) return false;
+    const endMs = Date.parse(room.round_ends_at as string);
+    return Number.isFinite(endMs) && endMs > nowMs;
+  });
+  if (!activeRoom) return { active: false };
 
   return {
     active: true,
-    roomId: room.id as string,
-    roomKey: room.room_key as string,
-    gameType: (room.selected_game_type as string | null) ?? null,
-    roundStartedAt: room.round_started_at as string,
-    roundEndsAt: room.round_ends_at as string,
-    timerSeconds: Number(room.timer_seconds ?? 0),
+    roomId: activeRoom.id as string,
+    roomKey: activeRoom.room_key as string,
+    gameType: (activeRoom.selected_game_type as string | null) ?? null,
+    roundStartedAt: activeRoom.round_started_at as string,
+    roundEndsAt: activeRoom.round_ends_at as string,
+    timerSeconds: Number(activeRoom.timer_seconds ?? 0),
   };
 }
 
