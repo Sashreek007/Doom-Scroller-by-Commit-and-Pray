@@ -11,6 +11,23 @@ import Settings from './pages/Settings';
 import BottomNav from './components/BottomNav';
 import { usePendingFriendRequestsCount } from './hooks/usePendingFriendRequestsCount';
 
+function getProfileInitials(displayName: string | null | undefined, username: string): string {
+  const source = (displayName?.trim() || username).replace(/^@+/, '').trim();
+  if (!source) return 'U';
+
+  const words = source
+    .split(/[\s._-]+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (words.length >= 2) {
+    return `${words[0][0]}${words[1][0]}`.toUpperCase();
+  }
+
+  const compact = words[0] ?? source;
+  return compact.slice(0, 2).toUpperCase();
+}
+
 function App() {
   const {
     user,
@@ -78,6 +95,7 @@ function App() {
   const currentProfile = profile;
   const fallbackUsername = currentUser.email?.split('@')[0]?.toLowerCase().replace(/[^a-z0-9_]/g, '_') || 'user';
   const headerUsername = currentProfile?.username ?? fallbackUsername;
+  const headerInitials = getProfileInitials(currentProfile?.display_name, headerUsername);
   const profileReady = Boolean(currentProfile);
 
   // Authenticated but needs to set username
@@ -192,14 +210,17 @@ function App() {
               setViewingProfileId(null);
               setActivePage('profile');
             }}
-            className="text-doom-muted text-xs font-mono hover:text-neon-cyan transition-colors"
+            className="w-9 h-9 rounded-full bg-doom-surface border border-doom-border text-white text-xs font-semibold tracking-wide hover:border-neon-green/40 hover:shadow-neon-green transition-all"
+            title={`@${headerUsername}`}
+            aria-label={`Open profile for @${headerUsername}`}
           >
-            @{headerUsername}
+            {headerInitials}
           </button>
           <button
             onClick={() => setActivePage('settings')}
-            className="text-doom-muted hover:text-white text-sm transition-colors"
+            className="w-9 h-9 rounded-full bg-doom-surface border border-doom-border text-doom-muted hover:text-white hover:border-neon-green/40 transition-all text-lg leading-none flex items-center justify-center"
             title="Settings"
+            aria-label="Open settings"
           >
             ⚙
           </button>
