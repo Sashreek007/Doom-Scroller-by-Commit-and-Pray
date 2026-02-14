@@ -38,7 +38,7 @@ A user opens YouTube for “a quick break,” starts scrolling, and sees distanc
 
 ## 💡 Solution Overview
 
-DoomScroller is a Chrome extension that tracks scroll distance across selected social platforms and converts activity into a live meter, coin system, social competition, and AI interactions. The system uses local-first updates for instant UX and asynchronous cloud sync for persistence and multiplayer features. Users can search/add friends, compare world/friends leaderboard positions, join battle rooms, and interact with AI chat/achievement experiences tied to their behavior.  
+DoomScroller is a Chrome extension that tracks scroll distance across selected social platforms and converts activity into a live meter, coin economy, social competition, and AI interactions. The system uses local-first updates for instant UX and asynchronous cloud sync for persistence and multiplayer features. In the Battle tab, a host creates a room and shares a short room code; other users join with that code, lock into the same lobby, and play timed coin-bet rounds. Users can search/add friends, compare world/friends leaderboard positions, run battles, and interact with AI chat/achievement experiences tied to their behavior. The AI is personalized: it roasts based on your own usage patterns, not generic canned text.  
 
 **Key Differentiator:** DoomScroller is not a static joke script; it is a real-time, data-backed extension where gameplay, stats, and AI behavior are integrated into one coherent loop.
 
@@ -61,16 +61,20 @@ DoomScroller is a Chrome extension that tracks scroll distance across selected s
 5. **Coins are awarded from distance progression**  
    Coin checkpoints are tracked and incremented as total distance crosses thresholds.
 
-6. **Battle rooms run timed multiplayer rounds**  
-   Users join with room keys, host configures bet/timer/game mode, and rounds run with shared timing plus live standings.
+6. **Battle rooms are created/joined by short room code**  
+   Host generates a 6-character room code, shares it, and players join with that exact code into the same lobby.
 
-7. **Round settlement is server-authoritative**  
-   End-of-round logic computes winners, splits pot/payouts, writes result payload, and keeps players in the room for the next round.
+7. **Battle tracker supports two game modes**
+   * **Scroll Sprint:** highest distance scrolled during the timer wins.
+   * **Target Chase:** closest to a generated target distance wins (overshoot/undershoot allowed).
 
-8. **Main-screen overlays deliver instant game feedback**  
+8. **Round settlement is server-authoritative**  
+   End-of-round logic computes winners, splits pot/payouts, writes result payload, updates coin balances, and keeps players in the room for the next round.
+
+9. **Main-screen overlays deliver instant game feedback**  
    During rounds, timer appears on the webpage; after settlement, winner/loser overlays (with confetti for winners) show directly on-page.
 
-9. **AI layer adds context-aware interaction**  
+10. **AI layer adds context-aware interaction**  
    Edge Functions generate roast/chat and achievement enrichment from authenticated user context, with fallbacks if AI is unavailable.
 
 ---
@@ -91,7 +95,7 @@ Popup UI + On-Page Overlays (timer, winner/loser, toasts)
 
 * Scroll events from supported social domains
 * Popup actions (auth, friends, rooms, settings, chat)
-* Battle/game actions and AI prompts
+* Battle room actions (create room, join by room code, start/finalize round) and AI prompts
 
 ### Processing
 
@@ -99,12 +103,13 @@ Popup UI + On-Page Overlays (timer, winner/loser, toasts)
 * Background service worker validates/aggregates events
 * Local cache updates UI immediately
 * Supabase sync writes durable state (profiles, sessions, friends, battles)
+* Battle pipeline creates/join lobbies by room code, then applies mode-specific scoring + payout settlement
 * Edge Functions generate AI chat and achievement content
 
 ### Outputs
 
 * Live today/total distance and per-app breakdown
-* Coin earnings and battle room updates
+* Coin earnings, battle room state, and round results
 * On-page timer + winner/loser overlay
 * AI roast responses and achievement metadata
 
@@ -137,6 +142,20 @@ AI is used where static rules alone would feel repetitive:
 * Personalized roast/chat responses from a user’s own doomscroll context
 * Achievement text enrichment with dynamic tone and context
 
+Personalization signals used for AI context include:
+
+* App mix (for example, which platform dominates your day)
+* Recent distance totals and session intensity
+* Time-of-day behavior tendencies
+* Battle outcomes and achievement history
+
+This is what makes roasts feel relevant (for example, calling out late-night YouTube marathons vs random generic insults).
+
+**5-second judge example (generic vs personalized):**
+
+* Generic roast: “You scroll too much. Touch grass.”
+* DoomScroller personalized roast: “You did 43m on YouTube after midnight and opened Instagram right after. Your thumb has a night shift now.”
+
 Why this is not a gimmick:
 
 * Rule-only systems can score behavior, but they cannot sustain varied, context-aware interaction quality.
@@ -153,11 +172,26 @@ Safety/control approach:
 
 ## ✨ Key Features
 
-* **Local-First Doom Meter** – Distance updates instantly, then syncs in background.
-* **Coins + Battle Rooms** – Room key join flow, bets, timers, and automated coin settlement.
-* **On-Page Battle Overlay** – Timer and winner/loser visuals appear directly on the webpage during/after rounds.
-* **Friends + Leaderboards** – Search/add/accept/remove friends and compare world/friends ranks.
-* **AI Roast + Achievements** – User-specific chat/achievement enrichment tied to scrolling behavior.
+* **Local-First Doom Meter + Per-App Breakdown**  
+  Scroll distance updates immediately from local cache so users do not wait on backend round-trips; unsynced deltas are merged with server stats for smooth totals.
+
+* **Room-Code Multiplayer Battle System**  
+  Host creates a battle room and gets a 6-character code. Other players join with that code, enter the same lobby, and remain in-room across popup close/reopen.
+
+* **Battle Tracker Game Mode 1: Scroll Sprint**  
+  Pure speed mode. Players scroll during the shared timer, and the highest round distance wins the pot.
+
+* **Battle Tracker Game Mode 2: Target Chase**  
+  Precision mode. System generates a target distance for the round; closest final distance wins (both overshoot and undershoot are valid).
+
+* **Realtime On-Page Round UX**  
+  During rounds, users get a timer overlay directly on the social page; after settlement, winner/loser results appear on-page, with confetti for winners.
+
+* **Coins, Friends, and Leaderboards**  
+  Coin balances update with distance and battle payouts; friends can send/accept requests and compare standings via friends/world leaderboards.
+
+* **AI Roast + AI-Enriched Achievements**  
+  Chat and achievement text are generated from each user’s own activity profile (app usage mix, recent sessions, behavior patterns), so feedback is context-relevant instead of generic, with fallback handling when AI services are unreachable.
 
 ---
 
