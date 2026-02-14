@@ -305,7 +305,7 @@ Safety/control approach:
 
 ## 🧑‍🤝‍🧑 Team
 
-* [NAME_1] — [ROLE] — [CONTRIBUTION]
+* Sashreek Addanki — [ROLE] — [CONTRIBUTION]
 * [NAME_2] — [ROLE] — [CONTRIBUTION]
 * [NAME_3] — [ROLE] — [CONTRIBUTION]
 * [NAME_4] — [ROLE] — [CONTRIBUTION]
