@@ -61,6 +61,7 @@ const TIMER_OPTIONS_SECONDS = [60, 120, 180, 300];
 const ROOM_KEY_LENGTH = 6;
 const JOIN_KEY_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const DB_REFRESH_DEBOUNCE_MS = 120;
+const ROOM_POLL_INTERVAL_MS = 1200;
 
 const GAME_OPTIONS: BattleGameOption[] = [
   {
@@ -294,7 +295,11 @@ export default function Battle({
           scheduleRefresh(roomId);
         },
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          scheduleRefresh(roomId);
+        }
+      });
 
     roomSubRef.current = channel;
   }, [scheduleRefresh]);
@@ -352,6 +357,17 @@ export default function Battle({
     if (!room?.id) return;
     subscribeToRoom(room.id);
   }, [room?.id, subscribeToRoom]);
+
+  useEffect(() => {
+    if (!room?.id) return;
+    const roomId = room.id;
+    const interval = window.setInterval(() => {
+      void refreshRoom(roomId);
+    }, ROOM_POLL_INTERVAL_MS);
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [refreshRoom, room?.id]);
 
   const createRoom = useCallback(async () => {
     setJoining(true);
@@ -500,19 +516,13 @@ export default function Battle({
     try {
       const leavingHost = room.host_id === userId;
 
-      const { error: leaveMembershipError } = await supabase
-        .from('battle_room_members')
-        .update({ status: 'left', left_at: new Date().toISOString(), role: 'player' })
-        .eq('room_id', room.id)
-        .eq('user_id', userId);
-      if (leaveMembershipError) throw new Error(parseDbError(leaveMembershipError));
-
       if (leavingHost) {
         const { data: nextHostRows, error: nextHostError } = await supabase
           .from('battle_room_members')
           .select('user_id')
           .eq('room_id', room.id)
           .eq('status', 'joined')
+          .neq('user_id', userId)
           .order('joined_at', { ascending: true })
           .limit(1);
 
@@ -546,6 +556,13 @@ export default function Battle({
           if (closeRoomError) throw new Error(parseDbError(closeRoomError));
         }
       }
+
+      const { error: leaveMembershipError } = await supabase
+        .from('battle_room_members')
+        .update({ status: 'left', left_at: new Date().toISOString(), role: 'player' })
+        .eq('room_id', room.id)
+        .eq('user_id', userId);
+      if (leaveMembershipError) throw new Error(parseDbError(leaveMembershipError));
 
       clearRoomState();
       setInfo('You left the room.');
