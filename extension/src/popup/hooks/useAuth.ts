@@ -3,11 +3,11 @@ import { supabase } from '@/shared/supabase';
 import type { User, Session } from '@supabase/supabase-js';
 import type { Profile } from '@/shared/types';
 import { ensureProfileExists, fetchProfile } from '@/shared/profile';
+import { AUTH_PROFILE_CACHE_PREFIX, writeProfileToCache } from '@/shared/profile-cache';
 
 const PROFILE_RESOLVE_TIMEOUT_MS = 10000;
 const PROFILE_RESOLVE_MAX_RETRIES = 3;
 const PROFILE_RETRY_DELAY_MS = 700;
-const AUTH_PROFILE_CACHE_PREFIX = 'cached_auth_profile_';
 
 interface AuthState {
   user: User | null;
@@ -44,12 +44,15 @@ export function useAuth() {
 
   const writeCachedProfile = useCallback(async (profile: Profile) => {
     try {
-      const key = getProfileCacheKey(profile.id);
-      await chrome.storage.local.set({ [key]: profile });
+      await writeProfileToCache(profile, {
+        includeProfileCache: false,
+        includeAuthCache: true,
+        preferredUserId: profile.id,
+      });
     } catch {
       // Ignore cache write issues; DB remains source of truth.
     }
-  }, [getProfileCacheKey]);
+  }, []);
 
   const ensureProfilePublic = useCallback(async (profile: Profile | null): Promise<Profile | null> => {
     if (!profile || profile.is_public) return profile;

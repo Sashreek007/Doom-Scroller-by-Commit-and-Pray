@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '@/shared/supabase';
 import type { LeaderboardEntry } from '@/shared/types';
+import UserAvatar from '../components/UserAvatar';
 
 interface LeaderboardProps {
   userId: string;
@@ -271,6 +272,12 @@ export default function Leaderboard({ userId, onViewProfile }: LeaderboardProps)
             <span className="text-lg font-bold font-mono neon-text-green">
               #{myRank.rank}
             </span>
+            <UserAvatar
+              avatarUrl={myRank.avatar_url}
+              displayName={myRank.display_name}
+              sizeClass="w-8 h-8"
+              iconClassName="text-base"
+            />
             <div className="flex-1">
               <p className="text-sm font-medium">You</p>
               <p className="text-doom-muted text-xs font-mono">@{myRank.username}</p>
@@ -311,6 +318,12 @@ export default function Leaderboard({ userId, onViewProfile }: LeaderboardProps)
               <span className="w-8 flex justify-center">
                 <RankBadge rank={entry.rank} />
               </span>
+              <UserAvatar
+                avatarUrl={entry.avatar_url}
+                displayName={entry.display_name}
+                sizeClass="w-8 h-8"
+                iconClassName="text-base"
+              />
               <div className="flex-1 text-left">
                 <p className="text-sm">
                   {entry.display_name}

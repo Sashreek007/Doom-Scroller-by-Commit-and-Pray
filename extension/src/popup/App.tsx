@@ -45,6 +45,7 @@ function App() {
   const [viewingProfileId, setViewingProfileId] = useState<string | null>(null);
   const { count: pendingRequestsCount, refresh: refreshPendingRequests } = usePendingFriendRequestsCount(user?.id ?? null);
   const [pendingRequestsLocal, setPendingRequestsLocal] = useState(0);
+  const [headerAvatarBroken, setHeaderAvatarBroken] = useState(false);
 
   useEffect(() => {
     setPendingRequestsLocal(pendingRequestsCount);
@@ -56,6 +57,10 @@ function App() {
     setViewingProfileId(null);
     if (!user) setAuthView('login');
   }, [user?.id]);
+
+  useEffect(() => {
+    setHeaderAvatarBroken(false);
+  }, [profile?.avatar_url]);
 
   if (loading) {
     return (
@@ -153,6 +158,7 @@ function App() {
             isOwnProfile={!viewingProfileId || viewingProfileId === currentUser.id}
             onBack={viewingProfileId ? () => setActivePage('home') : undefined}
             cachedProfile={(!viewingProfileId || viewingProfileId === currentUser.id) ? currentProfile ?? undefined : undefined}
+            onProfileUpdated={!viewingProfileId || viewingProfileId === currentUser.id ? refreshProfile : undefined}
           />
         );
       case 'settings':
@@ -210,11 +216,20 @@ function App() {
               setViewingProfileId(null);
               setActivePage('profile');
             }}
-            className="w-9 h-9 rounded-full bg-doom-surface border border-doom-border text-white text-xs font-semibold tracking-wide hover:border-neon-green/40 hover:shadow-neon-green transition-all"
+            className="w-9 h-9 rounded-full bg-doom-surface border border-doom-border text-white text-xs font-semibold tracking-wide hover:border-neon-green/40 hover:shadow-neon-green transition-all overflow-hidden flex items-center justify-center"
             title={`@${headerUsername}`}
             aria-label={`Open profile for @${headerUsername}`}
           >
-            {headerInitials}
+            {currentProfile?.avatar_url && !headerAvatarBroken ? (
+              <img
+                src={currentProfile.avatar_url}
+                alt={`${headerUsername} profile picture`}
+                className="w-full h-full object-cover"
+                onError={() => setHeaderAvatarBroken(true)}
+              />
+            ) : (
+              headerInitials
+            )}
           </button>
           <button
             onClick={() => setActivePage('settings')}

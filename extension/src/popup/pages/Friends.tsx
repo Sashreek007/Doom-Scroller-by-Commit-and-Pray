@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useFriends } from '../hooks/useFriends';
 import type { Profile } from '@/shared/types';
+import UserAvatar from '../components/UserAvatar';
 
 interface FriendsProps {
   userId: string;
@@ -197,7 +198,12 @@ export default function Friends({ userId, onViewProfile, onPendingRequestsChange
                     onClick={() => onViewProfile(user.id)}
                     className="flex items-center gap-2 hover:text-neon-cyan transition-colors"
                   >
-                    <span className="text-lg">💀</span>
+                    <UserAvatar
+                      avatarUrl={user.avatar_url}
+                      displayName={user.display_name}
+                      sizeClass="w-8 h-8"
+                      iconClassName="text-base"
+                    />
                     <div className="text-left">
                       <p className="text-sm font-medium">{user.display_name}</p>
                       <p className="text-doom-muted text-xs font-mono">@{user.username}</p>
@@ -245,7 +251,12 @@ export default function Friends({ userId, onViewProfile, onPendingRequestsChange
                     onClick={() => onViewProfile(profile.id)}
                     className="flex items-center gap-3 flex-1 text-left min-w-0"
                   >
-                    <span className="text-lg">💀</span>
+                    <UserAvatar
+                      avatarUrl={profile.avatar_url}
+                      displayName={profile.display_name}
+                      sizeClass="w-9 h-9"
+                      iconClassName="text-base"
+                    />
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium truncate">{profile.display_name}</p>
                       <p className="text-doom-muted text-xs font-mono truncate">@{profile.username}</p>
@@ -290,7 +301,12 @@ export default function Friends({ userId, onViewProfile, onPendingRequestsChange
                       onClick={() => onViewProfile(profile.id)}
                       className="flex items-center gap-2 hover:text-neon-cyan transition-colors"
                     >
-                      <span className="text-lg">💀</span>
+                      <UserAvatar
+                        avatarUrl={profile.avatar_url}
+                        displayName={profile.display_name}
+                        sizeClass="w-8 h-8"
+                        iconClassName="text-base"
+                      />
                       <div className="text-left">
                         <p className="text-sm font-medium">{profile.display_name}</p>
                         <p className="text-doom-muted text-xs font-mono">@{profile.username}</p>
@@ -333,7 +349,12 @@ export default function Friends({ userId, onViewProfile, onPendingRequestsChange
                     className="card flex items-center justify-between w-full text-left hover:border-neon-cyan/30 transition-colors"
                   >
                     <div className="flex items-center gap-2">
-                      <span className="text-lg">💀</span>
+                      <UserAvatar
+                        avatarUrl={profile.avatar_url}
+                        displayName={profile.display_name}
+                        sizeClass="w-8 h-8"
+                        iconClassName="text-base"
+                      />
                       <div className="text-left">
                         <p className="text-sm font-medium">{profile.display_name}</p>
                         <p className="text-doom-muted text-xs font-mono">@{profile.username}</p>
