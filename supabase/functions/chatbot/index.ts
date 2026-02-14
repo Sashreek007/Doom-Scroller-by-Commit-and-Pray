@@ -1,21 +1,44 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2.49.1';
 import { generateTextWithGemini, sanitizeAiText } from '../_shared/gemini.ts';
-import { loadUserBehaviorContext } from '../_shared/user-context.ts';
+import { ensureProfileExistsForUser, loadUserBehaviorContext } from '../_shared/user-context.ts';
+import type { UserBehaviorContext } from '../_shared/user-context.ts';
 
 const corsHeaders = {
   'access-control-allow-origin': '*',
-  'access-control-allow-headers': 'authorization, x-client-info, apikey, content-type',
+  'access-control-allow-headers': 'authorization, x-client-info, apikey, content-type, x-ds-token',
 };
 
 interface ChatRequest {
   message: string;
+  accessToken?: string;
 }
 
 interface StoredChatMessage {
   role: 'user' | 'assistant';
   content: string;
   created_at: string;
+}
+
+function extractBearerToken(authHeader: string | null): string | null {
+  if (!authHeader) return null;
+  const trimmed = authHeader.trim();
+  if (!trimmed) return null;
+  const match = /^Bearer\s+(.+)$/i.exec(trimmed);
+  return (match?.[1] ?? '').trim() || null;
+}
+
+function extractAccessToken(req: Request, body?: ChatRequest): string | null {
+  const fromAuth = extractBearerToken(req.headers.get('Authorization'));
+  if (fromAuth) return fromAuth;
+
+  const fromCustom = req.headers.get('x-ds-token')?.trim();
+  if (fromCustom && fromCustom.length > 20) return fromCustom;
+
+  const fromBody = typeof body?.accessToken === 'string' ? body.accessToken.trim() : '';
+  if (fromBody.length > 20) return fromBody;
+
+  return null;
 }
 
 function getEnv(name: string): string {
@@ -26,6 +49,45 @@ function getEnv(name: string): string {
 
 function clampMessage(value: string): string {
   return value.replace(/\s+/g, ' ').trim().slice(0, 1000);
+}
+
+function normalizeBaseUsername(input: string): string {
+  return input
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 20);
+}
+
+function buildFallbackContext(user: { id: string; email?: string | null; user_metadata?: Record<string, unknown> | null }): UserBehaviorContext {
+  const emailLocal = (user.email ?? '').split('@')[0].trim();
+  const username = normalizeBaseUsername(emailLocal || `user_${user.id.slice(0, 6)}`) || 'user';
+  const displayName = typeof user.user_metadata?.display_name === 'string'
+    ? user.user_metadata.display_name.trim().slice(0, 40)
+    : (emailLocal || 'Doom Scroller').slice(0, 40);
+
+  return {
+    userId: user.id,
+    username,
+    displayName,
+    profileCreatedAt: new Date().toISOString(),
+    totalMeters: 0,
+    recentMeters: 0,
+    topSite: null,
+    siteMix: {},
+    uniqueSites: 0,
+    avgSessionMeters: 0,
+    avgSessionDurationSec: 0,
+    maxBurstMeters5Min: 0,
+    activeHourBuckets: [],
+    activeDays: 0,
+    streakDays: 0,
+    recentAchievementTitles: [],
+    rank: null,
+    percentile: null,
+    sampleWindowDays: 30,
+  };
 }
 
 function buildPrompt(
@@ -73,8 +135,11 @@ serve(async (req: Request) => {
     const supabaseUrl = getEnv('SUPABASE_URL');
     const supabaseAnonKey = getEnv('SUPABASE_ANON_KEY');
 
+    const body = (await req.json()) as ChatRequest;
+
     const authHeader = req.headers.get('Authorization');
-    if (!authHeader) {
+    const accessToken = extractAccessToken(req, body);
+    if (!accessToken) {
       return new Response(JSON.stringify({ error: 'Missing authorization header' }), {
         status: 401,
         headers: { ...corsHeaders, 'content-type': 'application/json' },
@@ -84,7 +149,7 @@ serve(async (req: Request) => {
     const supabase = createClient(supabaseUrl, supabaseAnonKey, {
       global: {
         headers: {
-          Authorization: authHeader,
+          Authorization: `Bearer ${accessToken}`,
         },
       },
       auth: {
@@ -96,7 +161,7 @@ serve(async (req: Request) => {
     const {
       data: { user },
       error: authError,
-    } = await supabase.auth.getUser();
+    } = await supabase.auth.getUser(accessToken);
 
     if (authError || !user) {
       return new Response(JSON.stringify({ error: 'Unauthorized' }), {
@@ -105,7 +170,13 @@ serve(async (req: Request) => {
       });
     }
 
-    const body = (await req.json()) as ChatRequest;
+    let context: UserBehaviorContext = buildFallbackContext({
+      id: user.id,
+      email: user.email,
+      user_metadata: user.user_metadata as Record<string, unknown> | null,
+    });
+    let history: StoredChatMessage[] = [];
+
     const rawMessage = typeof body?.message === 'string' ? body.message : '';
     const message = clampMessage(rawMessage);
     if (message.length < 1) {
@@ -115,22 +186,33 @@ serve(async (req: Request) => {
       });
     }
 
-    const [context, historyRes] = await Promise.all([
-      loadUserBehaviorContext(supabase, user.id, {
-        sampleWindowDays: 30,
-        includeRank: true,
-      }),
-      supabase
-        .from('chat_messages')
-        .select('role, content, created_at')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false })
-        .limit(20),
-    ]);
+    try {
+      await ensureProfileExistsForUser(supabase, {
+        id: user.id,
+        email: user.email,
+        user_metadata: user.user_metadata as Record<string, unknown> | null,
+      });
 
-    const history = ((historyRes.data ?? []) as StoredChatMessage[])
-      .slice()
-      .reverse();
+      const [loadedContext, historyRes] = await Promise.all([
+        loadUserBehaviorContext(supabase, user.id, {
+          sampleWindowDays: 30,
+          includeRank: true,
+        }),
+        supabase
+          .from('chat_messages')
+          .select('role, content, created_at')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false })
+          .limit(20),
+      ]);
+
+      context = loadedContext;
+      history = ((historyRes.data ?? []) as StoredChatMessage[])
+        .slice()
+        .reverse();
+    } catch (contextError) {
+      console.warn('[chatbot] using fallback context:', contextError);
+    }
 
     const fallback = `You scrolled ${Math.round(context.recentMeters)}m in the last ${context.sampleWindowDays} days. Top app: ${context.topSite ?? 'unknown'}. Try touching grass before your thumb files overtime.`;
 
@@ -142,12 +224,16 @@ serve(async (req: Request) => {
 
     const reply = sanitizeAiText(aiRaw, context.username).slice(0, 800);
 
-    await supabase
-      .from('chat_messages')
-      .insert([
-        { user_id: user.id, role: 'user', content: message },
-        { user_id: user.id, role: 'assistant', content: reply },
-      ]);
+    try {
+      await supabase
+        .from('chat_messages')
+        .insert([
+          { user_id: user.id, role: 'user', content: message },
+          { user_id: user.id, role: 'assistant', content: reply },
+        ]);
+    } catch (persistError) {
+      console.warn('[chatbot] could not persist chat messages:', persistError);
+    }
 
     return new Response(
       JSON.stringify({

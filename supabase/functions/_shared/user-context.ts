@@ -129,6 +129,82 @@ interface ContextOptions {
   sampleWindowDays?: number;
 }
 
+interface AuthUserLike {
+  id: string;
+  email?: string | null;
+  user_metadata?: Record<string, unknown> | null;
+}
+
+function normalizeBaseUsername(input: string): string {
+  const normalized = input
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+
+  if (normalized.length >= 3) return normalized.slice(0, 20);
+  return `user_${Math.random().toString(36).slice(2, 6)}`;
+}
+
+function buildDisplayName(user: AuthUserLike): string {
+  const fromMeta = typeof user.user_metadata?.display_name === 'string'
+    ? user.user_metadata.display_name.trim()
+    : '';
+  if (fromMeta.length > 0) return fromMeta.slice(0, 40);
+
+  const fromEmail = (user.email ?? '').split('@')[0].trim();
+  if (fromEmail.length > 0) return fromEmail.slice(0, 40);
+  return 'Doom Scroller';
+}
+
+export async function ensureProfileExistsForUser(
+  supabase: SupabaseClient,
+  user: AuthUserLike,
+): Promise<void> {
+  const existing = await supabase
+    .from('profiles')
+    .select('id')
+    .eq('id', user.id)
+    .maybeSingle();
+
+  if (existing.data?.id) return;
+
+  const emailLocal = (user.email ?? '').split('@')[0] ?? '';
+  const base = normalizeBaseUsername(emailLocal || `user_${user.id.slice(0, 6)}`);
+  const displayName = buildDisplayName(user);
+  const candidates = [
+    base.slice(0, 20),
+    `${base.slice(0, 15)}_${user.id.replace(/-/g, '').slice(0, 4)}`.slice(0, 20),
+    `user_${user.id.replace(/-/g, '').slice(0, 8)}`.slice(0, 20),
+  ];
+
+  for (const username of candidates) {
+    const insertRes = await supabase
+      .from('profiles')
+      .insert({
+        id: user.id,
+        username,
+        display_name: displayName,
+        is_public: true,
+      });
+
+    if (!insertRes.error) return;
+    const message = (insertRes.error.message ?? '').toLowerCase();
+    const isUniqueConflict = insertRes.error.code === '23505' || message.includes('duplicate key');
+    if (!isUniqueConflict) break;
+  }
+
+  // A final read helps if profile was created concurrently by trigger/session race.
+  const finalRead = await supabase
+    .from('profiles')
+    .select('id')
+    .eq('id', user.id)
+    .maybeSingle();
+
+  if (finalRead.data?.id) return;
+  throw new Error(existing.error?.message || 'Could not ensure profile row');
+}
+
 export async function loadUserBehaviorContext(
   supabase: SupabaseClient,
   userId: string,

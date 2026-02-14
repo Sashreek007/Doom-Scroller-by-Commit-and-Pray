@@ -1,11 +1,11 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2.49.1';
 import { generateJsonWithGemini } from '../_shared/gemini.ts';
-import { loadUserBehaviorContext } from '../_shared/user-context.ts';
+import { ensureProfileExistsForUser, loadUserBehaviorContext } from '../_shared/user-context.ts';
 
 const corsHeaders = {
   'access-control-allow-origin': '*',
-  'access-control-allow-headers': 'authorization, x-client-info, apikey, content-type',
+  'access-control-allow-headers': 'authorization, x-client-info, apikey, content-type, x-ds-token',
 };
 
 type AchievementRarity = 'common' | 'rare' | 'epic' | 'legendary';
@@ -21,6 +21,7 @@ interface GenerateAchievementBody {
   eventKey: string;
   trigger: TriggerPayload;
   runtimeSnapshot?: Record<string, unknown>;
+  accessToken?: string;
 }
 
 interface AiBadgeResult {
@@ -31,6 +32,27 @@ interface AiBadgeResult {
   app_scope: string | null;
   meta_tags: string[];
   roast_line: string;
+}
+
+function extractBearerToken(authHeader: string | null): string | null {
+  if (!authHeader) return null;
+  const trimmed = authHeader.trim();
+  if (!trimmed) return null;
+  const match = /^Bearer\s+(.+)$/i.exec(trimmed);
+  return (match?.[1] ?? '').trim() || null;
+}
+
+function extractAccessToken(req: Request, body?: GenerateAchievementBody): string | null {
+  const fromAuth = extractBearerToken(req.headers.get('Authorization'));
+  if (fromAuth) return fromAuth;
+
+  const fromCustom = req.headers.get('x-ds-token')?.trim();
+  if (fromCustom && fromCustom.length > 20) return fromCustom;
+
+  const fromBody = typeof body?.accessToken === 'string' ? body.accessToken.trim() : '';
+  if (fromBody.length > 20) return fromBody;
+
+  return null;
 }
 
 function getEnv(name: string): string {
@@ -240,8 +262,11 @@ serve(async (req: Request) => {
     const supabaseUrl = getEnv('SUPABASE_URL');
     const supabaseAnonKey = getEnv('SUPABASE_ANON_KEY');
 
+    const body = (await req.json()) as GenerateAchievementBody;
+
     const authHeader = req.headers.get('Authorization');
-    if (!authHeader) {
+    const accessToken = extractAccessToken(req, body);
+    if (!accessToken) {
       return new Response(JSON.stringify({ error: 'Missing authorization header' }), {
         status: 401,
         headers: { ...corsHeaders, 'content-type': 'application/json' },
@@ -251,7 +276,7 @@ serve(async (req: Request) => {
     const supabase = createClient(supabaseUrl, supabaseAnonKey, {
       global: {
         headers: {
-          Authorization: authHeader,
+          Authorization: `Bearer ${accessToken}`,
         },
       },
       auth: {
@@ -263,7 +288,7 @@ serve(async (req: Request) => {
     const {
       data: { user },
       error: authError,
-    } = await supabase.auth.getUser();
+    } = await supabase.auth.getUser(accessToken);
 
     if (authError || !user) {
       return new Response(JSON.stringify({ error: 'Unauthorized' }), {
@@ -272,7 +297,12 @@ serve(async (req: Request) => {
       });
     }
 
-    const body = (await req.json()) as GenerateAchievementBody;
+    await ensureProfileExistsForUser(supabase, {
+      id: user.id,
+      email: user.email,
+      user_metadata: user.user_metadata as Record<string, unknown> | null,
+    });
+
     if (!body?.eventKey || !body?.trigger || !body.trigger.type) {
       return new Response(JSON.stringify({ error: 'Invalid payload' }), {
         status: 400,

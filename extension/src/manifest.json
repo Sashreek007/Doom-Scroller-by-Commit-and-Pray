@@ -28,7 +28,8 @@
     "https://youtube.com/*",
     "https://*.youtube.com/*",
     "https://pinterest.com/*",
-    "https://*.pinterest.com/*"
+    "https://*.pinterest.com/*",
+    "https://*.supabase.co/*"
   ],
   "background": {
     "service_worker": "src/background/index.ts",

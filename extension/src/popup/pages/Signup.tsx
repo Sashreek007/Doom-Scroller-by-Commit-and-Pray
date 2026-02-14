@@ -5,6 +5,23 @@ interface SignupProps {
   onSwitchToLogin: () => void;
 }
 
+function isNetworkErrorMsg(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const msg = err.message.toLowerCase();
+  return msg.includes('failed to fetch') || msg.includes('networkerror') || msg.includes('network request failed');
+}
+
+function toAuthErrorMessage(err: unknown): string {
+  if (err instanceof Error) {
+    const msg = err.message || '';
+    if (isNetworkErrorMsg(err)) {
+      return 'Could not connect to server. Check your internet connection and try again.';
+    }
+    return msg;
+  }
+  return 'Failed to sign up';
+}
+
 export default function Signup({ onSignUp, onSwitchToLogin }: SignupProps) {
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
@@ -12,11 +29,13 @@ export default function Signup({ onSignUp, onSwitchToLogin }: SignupProps) {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
+  const [isNetworkErr, setIsNetworkErr] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     setError('');
+    setIsNetworkErr(false);
 
     if (password !== confirmPassword) {
       setError('Passwords do not match');
@@ -37,7 +56,8 @@ export default function Signup({ onSignUp, onSwitchToLogin }: SignupProps) {
     try {
       await onSignUp(email, password, displayName);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to sign up');
+      setIsNetworkErr(isNetworkErrorMsg(err));
+      setError(toAuthErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -106,7 +126,19 @@ export default function Signup({ onSignUp, onSwitchToLogin }: SignupProps) {
         />
 
         {error && (
-          <p className="text-neon-pink text-xs text-center">{error}</p>
+          <div className="text-center space-y-2">
+            <p className="text-neon-pink text-xs">{error}</p>
+            {isNetworkErr && (
+              <button
+                type="button"
+                onClick={() => handleSubmit()}
+                disabled={loading}
+                className="text-neon-cyan text-xs hover:underline disabled:opacity-50"
+              >
+                Tap to retry
+              </button>
+            )}
+          </div>
         )}
 
         <button

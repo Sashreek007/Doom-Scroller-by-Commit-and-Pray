@@ -5,21 +5,41 @@ interface LoginProps {
   onSwitchToSignUp: () => void;
 }
 
+function isNetworkErrorMsg(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const msg = err.message.toLowerCase();
+  return msg.includes('failed to fetch') || msg.includes('networkerror') || msg.includes('network request failed');
+}
+
+function toAuthErrorMessage(err: unknown): string {
+  if (err instanceof Error) {
+    const msg = err.message || '';
+    if (isNetworkErrorMsg(err)) {
+      return 'Could not connect to server. Check your internet connection and try again.';
+    }
+    return msg;
+  }
+  return 'Failed to sign in';
+}
+
 export default function Login({ onSignIn, onSwitchToSignUp }: LoginProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
+  const [isNetworkErr, setIsNetworkErr] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     setError('');
+    setIsNetworkErr(false);
     setLoading(true);
     try {
       await onSignIn(email, password);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to sign in');
+      setIsNetworkErr(isNetworkErrorMsg(err));
+      setError(toAuthErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -70,7 +90,19 @@ export default function Login({ onSignIn, onSwitchToSignUp }: LoginProps) {
         </div>
 
         {error && (
-          <p className="text-neon-pink text-xs text-center">{error}</p>
+          <div className="text-center space-y-2">
+            <p className="text-neon-pink text-xs">{error}</p>
+            {isNetworkErr && (
+              <button
+                type="button"
+                onClick={() => handleSubmit()}
+                disabled={loading}
+                className="text-neon-cyan text-xs hover:underline disabled:opacity-50"
+              >
+                Tap to retry
+              </button>
+            )}
+          </div>
         )}
 
         <button

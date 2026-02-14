@@ -1,5 +1,4 @@
-[project]
-id = ""
+project_id = "doomscroller"
 
 [api]
 enabled = true

@@ -8,6 +8,28 @@ import { AUTH_PROFILE_CACHE_PREFIX, writeProfileToCache } from '@/shared/profile
 const PROFILE_RESOLVE_TIMEOUT_MS = 10000;
 const PROFILE_RESOLVE_MAX_RETRIES = 3;
 const PROFILE_RETRY_DELAY_MS = 700;
+const AUTH_NETWORK_RETRIES = 2;
+const AUTH_RETRY_DELAY_MS = 1000;
+
+function isNetworkError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const msg = err.message.toLowerCase();
+  return msg.includes('failed to fetch') || msg.includes('networkerror') || msg.includes('network request failed');
+}
+
+async function withNetworkRetry<T>(fn: () => Promise<T>): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= AUTH_NETWORK_RETRIES; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err;
+      if (!isNetworkError(err) || attempt === AUTH_NETWORK_RETRIES) break;
+      await new Promise((r) => setTimeout(r, AUTH_RETRY_DELAY_MS * (attempt + 1)));
+    }
+  }
+  throw lastError;
+}
 
 interface AuthState {
   user: User | null;
@@ -108,13 +130,21 @@ export function useAuth() {
     return last;
   }, [resolveProfileWithTimeout, wait]);
 
+  const ensureActiveSession = useCallback(async (session: Session | null): Promise<Session | null> => {
+    if (!session?.access_token) return null;
+    return session;
+  }, []);
+
   useEffect(() => {
     let mounted = true;
 
     async function loadSession(session: Session | null) {
       if (!mounted) return;
-      if (session?.user) {
-        const userId = session.user.id;
+      const activeSession = await ensureActiveSession(session);
+      if (!mounted) return;
+
+      if (activeSession?.user) {
+        const userId = activeSession.user.id;
         const userChanged = loadedUserId.current !== userId;
 
         loadedUserId.current = userId;
@@ -122,8 +152,8 @@ export function useAuth() {
 
         setState((prev) => ({
           ...prev,
-          user: session.user,
-          session,
+          user: activeSession.user,
+          session: activeSession,
           loading: false,
           profile: userChanged ? null : prev.profile,
           profileError: userChanged ? null : prev.profileError,
@@ -140,7 +170,7 @@ export function useAuth() {
 
         if (loadedProfileUserId.current === userId) return;
 
-        const { profile, timedOut } = await resolveProfileRobust(session.user);
+        const { profile, timedOut } = await resolveProfileRobust(activeSession.user);
         if (!mounted) return;
         if (profile) {
           loadedProfileUserId.current = userId;
@@ -184,25 +214,29 @@ export function useAuth() {
       clearTimeout(timeout);
       subscription.unsubscribe();
     };
-  }, [readCachedProfile, resolveProfileRobust, writeCachedProfile]);
+  }, [ensureActiveSession, readCachedProfile, resolveProfileRobust, writeCachedProfile]);
 
   const signUp = async (email: string, password: string, displayName: string) => {
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: { display_name: displayName },
-      },
-    });
+    const { data, error } = await withNetworkRetry(() =>
+      supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: { display_name: displayName },
+        },
+      }),
+    );
     if (error) throw error;
     return data;
   };
 
   const signIn = async (email: string, password: string) => {
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    const { data, error } = await withNetworkRetry(() =>
+      supabase.auth.signInWithPassword({
+        email,
+        password,
+      }),
+    );
     if (error) throw error;
 
     // Immediately update state so UI transitions without waiting for onAuthStateChange.

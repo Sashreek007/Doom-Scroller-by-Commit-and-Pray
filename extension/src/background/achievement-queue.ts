@@ -202,13 +202,22 @@ async function insertDeterministicAchievement(job: AchievementQueueJob): Promise
 
 async function invokeAiFunction(job: AchievementQueueJob): Promise<{ id?: string } | null> {
   const supabase = getSupabase();
+  const { data: { session } } = await supabase.auth.getSession();
+  const accessToken = session?.access_token ?? '';
 
   const response = await supabase.functions.invoke('generate-achievement', {
     body: {
       eventKey: job.eventKey,
       trigger: job.trigger,
       runtimeSnapshot: job.runtimeSnapshot,
+      accessToken,
     },
+    headers: accessToken
+      ? {
+        Authorization: `Bearer ${accessToken}`,
+        'x-ds-token': accessToken,
+      }
+      : undefined,
   });
 
   if (response.error) {
