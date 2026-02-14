@@ -259,42 +259,26 @@ Safety/control approach:
 ## ⚡ Setup & Run Locally
 
 ```bash
-git clone [repo-url]
+git clone [YOUR_REPO_URL]
 cd doomscroller
 npm install
-```
-
-Create `.env` in repo root:
-
-```bash
-VITE_SUPABASE_URL=https://your-project.supabase.co
-VITE_SUPABASE_ANON_KEY=your-anon-key
-```
-
-Build the extension:
-
-```bash
 cd extension
 npm run build
 ```
 
-Load in browser:
+Load the extension in browser:
 
 1. Open `chrome://extensions`
 2. Enable Developer mode
 3. Click Load unpacked
-4. Select `/Users/sashreek/Documents/doomscroller/extension/dist`
+4. Select the `dist` folder at `doomscroller/extension/dist`
 
-Optional backend setup:
+That’s it. Running it this way connects to the live online database by default, so after you sign in you can:
 
-```bash
-cd /Users/sashreek/Documents/doomscroller
-npx supabase@latest link --project-ref <PROJECT_REF>
-npx supabase@latest db push --include-all
-npx supabase@latest secrets set GEMINI_API_KEY="<YOUR_GEMINI_KEY>"
-npx supabase@latest functions deploy generate-achievement --use-api
-npx supabase@latest functions deploy chatbot --use-api
-```
+* appear on the world leaderboard
+* add friends
+* create/join battle rooms and play games
+* use AI chat and AI-powered achievement behavior
 
 ---
 
