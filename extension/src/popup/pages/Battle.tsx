@@ -81,6 +81,7 @@ const JOIN_KEY_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const DB_REFRESH_DEBOUNCE_MS = 120;
 const ROOM_POLL_INTERVAL_MS = 1200;
 const PRESTART_SECONDS = 8;
+const RESULT_SEEN_STORAGE_PREFIX = 'battle_result_seen_';
 
 const GAME_OPTIONS: BattleGameOption[] = [
   {
@@ -201,6 +202,10 @@ function formatMeters(value: number): string {
   if (!Number.isFinite(value)) return '0m';
   if (value < 1000) return `${value.toFixed(1)}m`;
   return `${(value / 1000).toFixed(2)}km`;
+}
+
+function getResultSeenStorageKey(userId: string, roomId: string): string {
+  return `${RESULT_SEEN_STORAGE_PREFIX}${userId}_${roomId}`;
 }
 
 function parseDbError(error: PostgrestError | null): string {
@@ -514,18 +519,42 @@ export default function Battle({
     if (!latestRoundResult || !room?.id) return;
     const resultKey = `${room.id}:${latestRoundResult.settledAt}`;
     if (shownResultKeyRef.current === resultKey) return;
-    shownResultKeyRef.current = resultKey;
-    setResultOverlay(latestRoundResult);
-    void onWalletSync?.();
+    const seenStorageKey = getResultSeenStorageKey(userId, room.id);
+    let cancelled = false;
+    let timeout: number | null = null;
 
-    const timeout = window.setTimeout(() => {
-      setResultOverlay(null);
-    }, 5200);
+    void (async () => {
+      try {
+        const cached = await chrome.storage.local.get(seenStorageKey);
+        if (cancelled) return;
+        const seenResultKey = typeof cached[seenStorageKey] === 'string'
+          ? cached[seenStorageKey] as string
+          : null;
+        if (seenResultKey === resultKey) return;
+      } catch {
+        // Ignore storage read errors and continue with in-memory gating.
+      }
+
+      if (cancelled) return;
+      shownResultKeyRef.current = resultKey;
+      setResultOverlay(latestRoundResult);
+      void onWalletSync?.();
+      timeout = window.setTimeout(() => {
+        setResultOverlay(null);
+      }, 5200);
+
+      try {
+        await chrome.storage.local.set({ [seenStorageKey]: resultKey });
+      } catch {
+        // Ignore storage write failures; UI still works.
+      }
+    })();
 
     return () => {
-      window.clearTimeout(timeout);
+      cancelled = true;
+      if (timeout !== null) window.clearTimeout(timeout);
     };
-  }, [latestRoundResult, onWalletSync, room?.id]);
+  }, [latestRoundResult, onWalletSync, room?.id, userId]);
 
   const createRoom = useCallback(async () => {
     setJoining(true);
