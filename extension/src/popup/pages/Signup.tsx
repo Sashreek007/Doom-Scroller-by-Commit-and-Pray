@@ -15,7 +15,7 @@ function toAuthErrorMessage(err: unknown): string {
   if (err instanceof Error) {
     const msg = err.message || '';
     if (isNetworkErrorMsg(err)) {
-      return 'Could not connect to server. Check your internet connection and try again.';
+      return 'Could not reach server. Office/school Wi-Fi may block required DNS. Connect to a personal hotspot and try again.';
     }
     return msg;
   }

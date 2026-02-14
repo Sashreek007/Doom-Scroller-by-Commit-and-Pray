@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from '@/shared/supabase';
 import type { ChatMessage } from '@/shared/types';
 import type { ChatbotResponse } from '@/shared/messages';
@@ -13,15 +13,25 @@ interface ChatContextSnapshot {
   recentMeters?: number;
 }
 
+const FALLBACK_REPLIES = [
+  'Your rank is somewhere between "needs help" and "thumb athlete." Keep scrolling and you will definitely move in one direction.',
+  'You asked for focus advice from a doomscroll bot. Respectfully, close this tab and touch your textbook for 20 minutes.',
+  'AI roast service is taking a break, but your scrolling never does. Consider a hydration break before your thumb asks for overtime pay.',
+];
+
 function buildFallbackReply(message: string): string {
   const normalized = message.trim().toLowerCase();
   if (normalized.includes('rank')) {
-    return 'Your rank is somewhere between "needs help" and "thumb athlete." Keep scrolling and you will definitely move in one direction.';
+    return FALLBACK_REPLIES[0];
   }
   if (normalized.includes('study') || normalized.includes('focus')) {
-    return 'You asked for focus advice from a doomscroll bot. Respectfully, close this tab and touch your textbook for 20 minutes.';
+    return FALLBACK_REPLIES[1];
   }
-  return 'AI roast service is taking a break, but your scrolling never does. Consider a hydration break before your thumb asks for overtime pay.';
+  return FALLBACK_REPLIES[2];
+}
+
+function isFallbackMessage(content: string): boolean {
+  return FALLBACK_REPLIES.some((f) => content.trim() === f);
 }
 
 function temporaryMessage(role: 'user' | 'assistant', content: string): ChatMessage {
@@ -143,6 +153,7 @@ export function useChat(userId: string) {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [context, setContext] = useState<ChatContextSnapshot | null>(null);
+  const sendingRef = useRef(false);
 
   const refresh = useCallback(async () => {
     const { data, error: queryError } = await supabase
@@ -157,7 +168,23 @@ export function useChat(userId: string) {
       return;
     }
 
-    setMessages((data as ChatMessage[]) ?? []);
+    // Filter out old fallback messages that were persisted to DB in earlier versions.
+    const dbMessages = ((data as ChatMessage[]) ?? []).filter(
+      (m) => !(m.role === 'assistant' && isFallbackMessage(m.content)),
+    );
+
+    // Merge: keep any temporary messages (id starts with "tmp_") that aren't in DB yet.
+    setMessages((prev) => {
+      const tmpMessages = prev.filter((m) => m.id.startsWith('tmp_'));
+      if (tmpMessages.length === 0) return dbMessages;
+
+      // Append temporary messages that don't have a DB counterpart yet.
+      const dbContentSet = new Set(dbMessages.map((m) => `${m.role}:${m.content}`));
+      const uniqueTmp = tmpMessages.filter(
+        (m) => !dbContentSet.has(`${m.role}:${m.content}`),
+      );
+      return [...dbMessages, ...uniqueTmp];
+    });
     setLoading(false);
   }, [userId]);
 
@@ -167,14 +194,7 @@ export function useChat(userId: string) {
   }, [refresh]);
 
   const getAccessToken = useCallback(async (): Promise<string> => {
-    // Try refreshing the session first to ensure a fresh token.
-    // In Chrome extensions, tokens expire frequently between popup opens.
-    const { data: refreshData } = await supabase.auth.refreshSession();
-    if (refreshData.session?.access_token) {
-      return refreshData.session.access_token;
-    }
-
-    // Fall back to existing session if refresh didn't work.
+    // 1. Get existing session first (local/cached — won't throw on network error).
     const {
       data: { session },
       error: sessionError,
@@ -184,6 +204,25 @@ export function useChat(userId: string) {
     if (!session?.access_token) {
       throw new Error('Session expired. Please sign in again.');
     }
+
+    // 2. Only refresh if token expires within 60 seconds.
+    const expiresAt = session.expires_at; // Unix timestamp in seconds
+    const now = Math.floor(Date.now() / 1000);
+    if (expiresAt && expiresAt - now > 60) {
+      return session.access_token;
+    }
+
+    // 3. Token is near expiry — try to refresh, but don't crash if it fails.
+    try {
+      const { data: refreshData } = await supabase.auth.refreshSession();
+      if (refreshData.session?.access_token) {
+        return refreshData.session.access_token;
+      }
+    } catch {
+      console.warn('[DoomScroller] Session refresh failed, using existing token');
+    }
+
+    // 4. Return existing token as last resort.
     return session.access_token;
   }, []);
 
@@ -196,19 +235,26 @@ export function useChat(userId: string) {
         throw firstError;
       }
 
-      const refreshSessionResult = await supabase.auth.refreshSession();
-      if (refreshSessionResult.error || !refreshSessionResult.data.session?.access_token) {
-        throw refreshSessionResult.error ?? new Error('Session expired. Please sign in again.');
+      // Auth error (401/403) — try refreshing session and retrying once.
+      try {
+        const refreshSessionResult = await supabase.auth.refreshSession();
+        if (refreshSessionResult.error || !refreshSessionResult.data.session?.access_token) {
+          throw firstError; // Refresh failed — throw original error.
+        }
+        return await invokeChatbotApi(message, refreshSessionResult.data.session.access_token);
+      } catch (retryError) {
+        // If the retry itself failed with a different error, throw the original auth error.
+        if (isAuthError(retryError)) throw retryError;
+        throw firstError;
       }
-
-      return invokeChatbotApi(message, refreshSessionResult.data.session.access_token);
     }
   }, [getAccessToken]);
 
   const sendMessage = useCallback(async (rawInput: string) => {
     const message = rawInput.trim();
-    if (!message || sending) return;
+    if (!message || sendingRef.current) return;
 
+    sendingRef.current = true;
     setSending(true);
     setError(null);
 
@@ -224,30 +270,20 @@ export function useChat(userId: string) {
 
       setMessages((prev) => [...prev, temporaryMessage('assistant', reply)]);
       setContext(payload.context ?? null);
-      void refresh();
+      // Delay refresh to give the Edge Function time to persist messages to DB.
+      setTimeout(() => { void refresh(); }, 1500);
     } catch (err) {
       const fallback = buildFallbackReply(message);
       setMessages((prev) => [...prev, temporaryMessage('assistant', fallback)]);
       const reason = errorMessage(err);
       setError(`AI service unavailable. ${reason || 'Showing fallback roast.'}`);
       console.error('[DoomScroller] Chat invoke failed:', err);
-
-      // Keep local fallback visible and persist basic chat continuity when possible.
-      try {
-        await supabase
-          .from('chat_messages')
-          .insert([
-            { user_id: userId, role: 'user', content: message },
-            { user_id: userId, role: 'assistant', content: fallback },
-          ]);
-      } catch {
-        // Ignore fallback persistence errors.
-      }
-      void refresh();
+      // Don't persist fallback messages to DB — they pollute conversation history.
     } finally {
+      sendingRef.current = false;
       setSending(false);
     }
-  }, [invokeChatbot, refresh, sending, userId]);
+  }, [invokeChatbot, refresh, userId]);
 
   return {
     messages,
