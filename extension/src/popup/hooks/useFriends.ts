@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '@/shared/supabase';
 import type { Profile, Friendship } from '@/shared/types';
 
@@ -6,6 +6,14 @@ interface FriendWithProfile {
   friendship: Friendship;
   profile: Profile;
 }
+
+interface FriendAcceptanceNotice {
+  userId: string;
+  displayName: string;
+  username: string;
+}
+
+const FRIENDS_REFRESH_INTERVAL_MS = 3000;
 
 function normalizeForSearch(value: string): string {
   return value
@@ -62,73 +70,157 @@ export function useFriends(userId: string) {
   const [friends, setFriends] = useState<FriendWithProfile[]>([]);
   const [pendingReceived, setPendingReceived] = useState<FriendWithProfile[]>([]);
   const [pendingSent, setPendingSent] = useState<FriendWithProfile[]>([]);
+  const [acceptanceNotices, setAcceptanceNotices] = useState<FriendAcceptanceNotice[]>([]);
   const [loading, setLoading] = useState(true);
+  const initializedRef = useRef(false);
+  const prevPendingSentUserIdsRef = useRef<Set<string>>(new Set());
+  const refreshInFlightRef = useRef(false);
+  const refreshQueuedRef = useRef(false);
 
   const refresh = useCallback(async () => {
-    // Fetch all friendships involving this user
-    const { data: friendships } = await supabase
-      .from('friendships')
-      .select('*')
-      .or(`requester_id.eq.${userId},addressee_id.eq.${userId}`);
-
-    if (!friendships) {
-      setLoading(false);
+    if (refreshInFlightRef.current) {
+      refreshQueuedRef.current = true;
       return;
     }
 
-    // Collect all other user IDs
-    const otherUserIds = Array.from(
-      new Set(friendships.map((f) => (f.requester_id === userId ? f.addressee_id : f.requester_id))),
-    );
+    refreshInFlightRef.current = true;
 
-    // Fetch profiles for those users
-    let profiles: Profile[] = [];
-    if (otherUserIds.length > 0) {
-      const { data } = await supabase
-        .from('profiles')
-        .select('*')
-        .in('id', otherUserIds);
-      profiles = (data as Profile[]) ?? [];
-    }
+    try {
+      do {
+        refreshQueuedRef.current = false;
 
-    const profileMap = new Map<string, Profile>();
-    for (const p of profiles) {
-      profileMap.set(p.id, p as Profile);
-    }
+        const { data: friendships, error: friendshipsError } = await supabase
+          .from('friendships')
+          .select('*')
+          .or(`requester_id.eq.${userId},addressee_id.eq.${userId}`);
 
-    const accepted: FriendWithProfile[] = [];
-    const received: FriendWithProfile[] = [];
-    const sent: FriendWithProfile[] = [];
-
-    for (const f of friendships as Friendship[]) {
-      const otherId = f.requester_id === userId ? f.addressee_id : f.requester_id;
-      const profile = profileMap.get(otherId);
-      if (!profile) continue;
-
-      const item = { friendship: f, profile };
-
-      if (f.status === 'accepted') {
-        accepted.push(item);
-      } else if (f.status === 'pending') {
-        if (f.addressee_id === userId) {
-          received.push(item);
-        } else {
-          sent.push(item);
+        if (friendshipsError) {
+          setLoading(false);
+          continue;
         }
-      }
-    }
 
-    setFriends(accepted);
-    setPendingReceived(received);
-    setPendingSent(sent);
-    setLoading(false);
+        const safeFriendships = (friendships as Friendship[] | null) ?? [];
+        const otherUserIds = Array.from(
+          new Set(
+            safeFriendships.map((f) => (f.requester_id === userId ? f.addressee_id : f.requester_id)),
+          ),
+        );
+
+        let profiles: Profile[] = [];
+        if (otherUserIds.length > 0) {
+          const { data } = await supabase
+            .from('profiles')
+            .select('*')
+            .in('id', otherUserIds);
+          profiles = (data as Profile[]) ?? [];
+        }
+
+        const profileMap = new Map<string, Profile>();
+        for (const p of profiles) {
+          profileMap.set(p.id, p as Profile);
+        }
+
+        const accepted: FriendWithProfile[] = [];
+        const received: FriendWithProfile[] = [];
+        const sent: FriendWithProfile[] = [];
+
+        for (const f of safeFriendships) {
+          const otherId = f.requester_id === userId ? f.addressee_id : f.requester_id;
+          const profile = profileMap.get(otherId);
+          if (!profile) continue;
+
+          const item = { friendship: f, profile };
+
+          if (f.status === 'accepted') {
+            accepted.push(item);
+          } else if (f.status === 'pending') {
+            if (f.addressee_id === userId) {
+              received.push(item);
+            } else {
+              sent.push(item);
+            }
+          }
+        }
+
+        setFriends(accepted);
+        setPendingReceived(received);
+        setPendingSent(sent);
+
+        const nextPendingSentUserIds = new Set(sent.map((item) => item.profile.id));
+        if (initializedRef.current) {
+          const justAccepted = accepted
+            .filter((item) => prevPendingSentUserIdsRef.current.has(item.profile.id))
+            .map((item) => ({
+              userId: item.profile.id,
+              displayName: item.profile.display_name,
+              username: item.profile.username,
+            }));
+
+          if (justAccepted.length > 0) {
+            setAcceptanceNotices((prev) => {
+              const seenIds = new Set(prev.map((notice) => notice.userId));
+              const additions = justAccepted.filter((notice) => !seenIds.has(notice.userId));
+              if (additions.length === 0) return prev;
+              return [...prev, ...additions];
+            });
+          }
+        }
+
+        initializedRef.current = true;
+        prevPendingSentUserIdsRef.current = nextPendingSentUserIds;
+        setLoading(false);
+      } while (refreshQueuedRef.current);
+    } finally {
+      refreshInFlightRef.current = false;
+    }
   }, [userId]);
 
   useEffect(() => {
-    refresh();
+    void refresh();
+    const interval = setInterval(() => {
+      void refresh();
+    }, FRIENDS_REFRESH_INTERVAL_MS);
+
+    return () => clearInterval(interval);
   }, [refresh]);
 
+  useEffect(() => {
+    const channel = supabase
+      .channel(`friendships-${userId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'friendships', filter: `requester_id=eq.${userId}` },
+        () => {
+          void refresh();
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'friendships', filter: `addressee_id=eq.${userId}` },
+        () => {
+          void refresh();
+        },
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [userId, refresh]);
+
+  const dismissAcceptanceNotice = useCallback((userIdToDismiss: string) => {
+    setAcceptanceNotices((prev) => prev.filter((notice) => notice.userId !== userIdToDismiss));
+  }, []);
+
+  const dismissAllAcceptanceNotices = useCallback(() => {
+    setAcceptanceNotices([]);
+  }, []);
+
   const sendRequest = async (targetUserId: string) => {
+    // Optimistic pending-sent update for immediate UI response.
+    const existingFriend = friends.find((item) => item.profile.id === targetUserId);
+    if (existingFriend) return;
+
     const { error } = await supabase.from('friendships').insert({
       requester_id: userId,
       addressee_id: targetUserId,
@@ -138,29 +230,51 @@ export function useFriends(userId: string) {
   };
 
   const acceptRequest = async (friendshipId: string) => {
+    const pending = pendingReceived.find((item) => item.friendship.id === friendshipId);
+    if (pending) {
+      setPendingReceived((prev) => prev.filter((item) => item.friendship.id !== friendshipId));
+      setFriends((prev) => {
+        if (prev.some((item) => item.profile.id === pending.profile.id)) return prev;
+        return [...prev, { ...pending, friendship: { ...pending.friendship, status: 'accepted' } }];
+      });
+    }
+
     const { error } = await supabase
       .from('friendships')
       .update({ status: 'accepted' })
       .eq('id', friendshipId);
-    if (error) throw error;
+    if (error) {
+      await refresh();
+      throw error;
+    }
     await refresh();
   };
 
   const rejectRequest = async (friendshipId: string) => {
+    setPendingReceived((prev) => prev.filter((item) => item.friendship.id !== friendshipId));
+
     const { error } = await supabase
       .from('friendships')
       .update({ status: 'rejected' })
       .eq('id', friendshipId);
-    if (error) throw error;
+    if (error) {
+      await refresh();
+      throw error;
+    }
     await refresh();
   };
 
   const removeFriend = async (friendshipId: string) => {
+    setFriends((prev) => prev.filter((item) => item.friendship.id !== friendshipId));
+
     const { error } = await supabase
       .from('friendships')
       .delete()
       .eq('id', friendshipId);
-    if (error) throw error;
+    if (error) {
+      await refresh();
+      throw error;
+    }
     await refresh();
   };
 
@@ -203,6 +317,7 @@ export function useFriends(userId: string) {
     friends,
     pendingReceived,
     pendingSent,
+    acceptanceNotices,
     loading,
     refresh,
     sendRequest,
@@ -210,5 +325,7 @@ export function useFriends(userId: string) {
     rejectRequest,
     removeFriend,
     searchUsers,
+    dismissAcceptanceNotice,
+    dismissAllAcceptanceNotices,
   };
 }

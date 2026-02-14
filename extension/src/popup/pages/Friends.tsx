@@ -13,11 +13,14 @@ export default function Friends({ userId, onViewProfile, onPendingRequestsChange
     friends,
     pendingReceived,
     pendingSent,
+    acceptanceNotices,
     loading,
     sendRequest,
     acceptRequest,
     rejectRequest,
+    removeFriend,
     searchUsers,
+    dismissAcceptanceNotice,
   } = useFriends(userId);
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -25,6 +28,7 @@ export default function Friends({ userId, onViewProfile, onPendingRequestsChange
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState<'friends' | 'requests'>('friends');
+  const [removingFriendshipId, setRemovingFriendshipId] = useState<string | null>(null);
 
   useEffect(() => {
     onPendingRequestsChanged?.(pendingReceived.length);
@@ -78,6 +82,18 @@ export default function Friends({ userId, onViewProfile, onPendingRequestsChange
     }
   };
 
+  const handleRemoveFriend = async (friendshipId: string) => {
+    setError('');
+    setRemovingFriendshipId(friendshipId);
+    try {
+      await removeFriend(friendshipId);
+    } catch {
+      setError('Failed to remove friend');
+    } finally {
+      setRemovingFriendshipId(null);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -87,7 +103,7 @@ export default function Friends({ userId, onViewProfile, onPendingRequestsChange
   }
 
   return (
-      <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-4">
       {/* Search */}
       <div>
         <div className="flex gap-2">
@@ -111,6 +127,35 @@ export default function Friends({ userId, onViewProfile, onPendingRequestsChange
         </div>
         {error && <p className="text-neon-pink text-xs mt-1">{error}</p>}
       </div>
+
+      {acceptanceNotices.length > 0 && (
+        <div className="space-y-2">
+          {acceptanceNotices.map((notice) => (
+            <div
+              key={notice.userId}
+              className="rounded-lg border border-neon-cyan/40 bg-neon-cyan/10 px-3 py-2 flex items-center justify-between gap-2"
+            >
+              <button
+                onClick={() => onViewProfile(notice.userId)}
+                className="flex-1 text-left"
+              >
+                <p className="text-neon-cyan text-[11px] font-mono uppercase tracking-wider">
+                  Friend request accepted
+                </p>
+                <p className="text-white text-xs">
+                  {notice.displayName} (@{notice.username}) accepted your request.
+                </p>
+              </button>
+              <button
+                onClick={() => dismissAcceptanceNotice(notice.userId)}
+                className="text-doom-muted hover:text-white text-xs px-2 py-1 rounded border border-doom-border hover:border-neon-cyan/40 transition-colors"
+              >
+                Dismiss
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       <div className="grid grid-cols-2 gap-2">
         <button
@@ -191,23 +236,36 @@ export default function Friends({ userId, onViewProfile, onPendingRequestsChange
           </p>
           {friends.length > 0 ? (
             <div className="space-y-2">
-              {friends.map(({ profile }) => (
-                <button
-                  key={profile.id}
-                  onClick={() => onViewProfile(profile.id)}
-                  className="card flex items-center gap-3 w-full text-left hover:border-neon-green/30 transition-colors"
+              {friends.map(({ friendship, profile }) => (
+                <div
+                  key={friendship.id}
+                  className="card flex items-center justify-between gap-2 w-full hover:border-neon-green/30 transition-colors"
                 >
-                  <span className="text-lg">💀</span>
-                  <div className="flex-1">
-                    <p className="text-sm font-medium">{profile.display_name}</p>
-                    <p className="text-doom-muted text-xs font-mono">@{profile.username}</p>
+                  <button
+                    onClick={() => onViewProfile(profile.id)}
+                    className="flex items-center gap-3 flex-1 text-left min-w-0"
+                  >
+                    <span className="text-lg">💀</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">{profile.display_name}</p>
+                      <p className="text-doom-muted text-xs font-mono truncate">@{profile.username}</p>
+                    </div>
+                  </button>
+                  <div className="flex items-center gap-2">
+                    <span className="text-doom-muted text-xs font-mono whitespace-nowrap">
+                      {profile.total_meters_scrolled < 1000
+                        ? `${Math.round(profile.total_meters_scrolled)}m`
+                        : `${(profile.total_meters_scrolled / 1000).toFixed(1)}km`}
+                    </span>
+                    <button
+                      onClick={() => handleRemoveFriend(friendship.id)}
+                      disabled={removingFriendshipId === friendship.id}
+                      className="btn-danger text-[11px] px-2 py-1 disabled:opacity-60"
+                    >
+                      {removingFriendshipId === friendship.id ? '...' : 'Remove'}
+                    </button>
                   </div>
-                  <span className="text-doom-muted text-xs font-mono">
-                    {profile.total_meters_scrolled < 1000
-                      ? `${Math.round(profile.total_meters_scrolled)}m`
-                      : `${(profile.total_meters_scrolled / 1000).toFixed(1)}km`}
-                  </span>
-                </button>
+                </div>
               ))}
             </div>
           ) : (
