@@ -305,10 +305,10 @@ Safety/control approach:
 
 ## 🧑‍🤝‍🧑 Team
 
-* Sashreek Addanki — [ROLE] — [CONTRIBUTION]
-* [NAME_2] — [ROLE] — [CONTRIBUTION]
-* [NAME_3] — [ROLE] — [CONTRIBUTION]
-* [NAME_4] — [ROLE] — [CONTRIBUTION]
+* Sashreek Addanki
+* [NAME_2]
+* [NAME_3]
+* [NAME_4]
 
 ---
 
