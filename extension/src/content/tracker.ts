@@ -20,7 +20,7 @@ const TOAST_ENTER_MS = 170;
 const TOAST_EXIT_MS = 200;
 const COIN_TOAST_VISIBLE_MS = 1300;
 const ACHIEVEMENT_TOAST_VISIBLE_MS = 2600;
-const BATTLE_TIMER_SYNC_INTERVAL_MS = 2000;
+const BATTLE_TIMER_SYNC_INTERVAL_MS = 650;
 const BATTLE_TIMER_TICK_INTERVAL_MS = 250;
 const BATTLE_RESULT_OVERLAY_MS = 5200;
 
@@ -53,6 +53,8 @@ if (!config) {
   let battleResultOverlayHost: HTMLDivElement | null = null;
   let battleResultHideTimer: number | null = null;
   let shownBattleResultKey: string | null = null;
+  let battleTimerSyncInFlight = false;
+  let battleTimerLastSyncAt = 0;
 
   const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -163,6 +165,7 @@ if (!config) {
     const now = Date.now();
     if (now >= battleTimerState.roundEndMs) {
       clearBattleTimerState();
+      void syncBattleTimer(true);
       return;
     }
 
@@ -221,7 +224,12 @@ if (!config) {
     renderBattleTimer();
   }
 
-  async function syncBattleTimer() {
+  async function syncBattleTimer(force = false) {
+    const now = Date.now();
+    if (!force && (now - battleTimerLastSyncAt) < 250) return;
+    if (battleTimerSyncInFlight) return;
+    battleTimerSyncInFlight = true;
+    battleTimerLastSyncAt = now;
     try {
       const response = await chrome.runtime.sendMessage({
         type: 'GET_BATTLE_TIMER',
@@ -230,6 +238,8 @@ if (!config) {
       void maybeShowBattleResultOverlay(response);
     } catch {
       // Keep existing timer state on transient background/network errors.
+    } finally {
+      battleTimerSyncInFlight = false;
     }
   }
 

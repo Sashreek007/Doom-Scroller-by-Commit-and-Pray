@@ -22,7 +22,7 @@ import { enqueueAchievementJob, triggerAchievementQueueProcessing } from './achi
 
 const DB_STATS_REFRESH_INTERVAL_MS = 5000;
 const INITIAL_DB_REFRESH_WAIT_MS = 250;
-const BATTLE_TIMER_CACHE_TTL_MS = 1500;
+const BATTLE_TIMER_CACHE_TTL_MS = 400;
 
 const dbRefreshInFlight = new Map<string, Promise<void>>();
 const battleTimerCache = new Map<string, { updatedAt: number; value: GetBattleTimerResponse }>();
@@ -140,7 +140,15 @@ async function getBattleTimer(userId: string): Promise<GetBattleTimerResponse> {
   const cached = battleTimerCache.get(userId);
   const now = Date.now();
   if (cached && (now - cached.updatedAt) < BATTLE_TIMER_CACHE_TTL_MS) {
-    return cached.value;
+    if (cached.value.active) {
+      const endMs = Date.parse(cached.value.roundEndsAt ?? '');
+      if (!(Number.isFinite(endMs) && endMs <= now)) {
+        return cached.value;
+      }
+      // Cached "active" state already expired locally; fetch fresh now.
+    } else {
+      return cached.value;
+    }
   }
 
   const value = await fetchBattleTimerFromDb(userId);
