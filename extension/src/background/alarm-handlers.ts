@@ -46,9 +46,32 @@ async function syncToSupabase() {
 
   if (error) {
     console.error('[DoomScroller] Sync failed:', error.message);
-    // Re-add failed data back to batches (best effort)
-    // In production, you'd want a more robust retry mechanism
   } else {
     console.log(`[DoomScroller] Synced ${sessions.length} session(s) to Supabase`);
+    // Update total meters on profile
+    const totalMeters = sessions.reduce((sum, s) => sum + s.meters_scrolled, 0);
+    await supabase.rpc('increment_total_meters', {
+      user_id_input: session.user.id,
+      meters_to_add: totalMeters,
+    }).then(({ error: rpcError }) => {
+      if (rpcError) {
+        // Fallback: direct update if RPC doesn't exist
+        supabase
+          .from('profiles')
+          .select('total_meters_scrolled')
+          .eq('id', session.user.id)
+          .single()
+          .then(({ data }) => {
+            if (data) {
+              const newTotal = Number(data.total_meters_scrolled) + totalMeters;
+              supabase
+                .from('profiles')
+                .update({ total_meters_scrolled: newTotal })
+                .eq('id', session.user.id)
+                .then(() => {});
+            }
+          });
+      }
+    });
   }
 }

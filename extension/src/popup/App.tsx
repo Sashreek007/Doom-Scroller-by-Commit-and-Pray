@@ -98,6 +98,7 @@ function App() {
             userId={viewingProfileId ?? user!.id}
             isOwnProfile={!viewingProfileId || viewingProfileId === user!.id}
             onBack={viewingProfileId ? () => setActivePage('home') : undefined}
+            cachedProfile={(!viewingProfileId || viewingProfileId === user!.id) ? profile : undefined}
           />
         );
       case 'settings':

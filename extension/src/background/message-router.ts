@@ -1,6 +1,6 @@
 // Routes messages from content scripts and popup to appropriate handlers
 
-import { addScrollData } from './scroll-aggregator';
+import { addScrollData, getBatches } from './scroll-aggregator';
 import type { ExtensionMessage, GetStatsResponse } from '../shared/messages';
 import { getSupabase } from './supabase-client';
 
@@ -18,7 +18,7 @@ export function handleMessage(
     }
 
     case 'GET_STATS': {
-      // Async: fetch stats from Supabase
+      // Async: fetch stats from Supabase + merge local unsynced data
       getStats().then(sendResponse).catch(() => {
         sendResponse({ todayMeters: 0, todayBysite: {}, totalMeters: 0 });
       });
@@ -31,13 +31,27 @@ export function handleMessage(
 }
 
 async function getStats(): Promise<GetStatsResponse> {
+  // Always include local unsynced batches so data shows immediately
+  const localBatches = getBatches();
+  let localMeters = 0;
+  const localBysite: Record<string, number> = {};
+  for (const [site, batch] of localBatches) {
+    localMeters += batch.totalMeters;
+    localBysite[site] = (localBysite[site] ?? 0) + batch.totalMeters;
+  }
+
   const supabase = getSupabase();
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) {
-    return { todayMeters: 0, todayBysite: {}, totalMeters: 0 };
+    // Not logged in — just return local data
+    return {
+      todayMeters: parseFloat(localMeters.toFixed(2)),
+      todayBysite: localBysite,
+      totalMeters: parseFloat(localMeters.toFixed(2)),
+    };
   }
 
-  // Get today's start in UTC
+  // Get today's start in local time
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
 
@@ -58,6 +72,12 @@ async function getStats(): Promise<GetStatsResponse> {
     }
   }
 
+  // Merge local unsynced data on top of Supabase data
+  for (const [site, meters] of Object.entries(localBysite)) {
+    todayMeters += meters;
+    todayBysite[site] = (todayBysite[site] ?? 0) + meters;
+  }
+
   // Get total from profile
   const { data: profile } = await supabase
     .from('profiles')
@@ -65,9 +85,11 @@ async function getStats(): Promise<GetStatsResponse> {
     .eq('id', session.user.id)
     .single();
 
+  const totalFromDb = profile ? Number(profile.total_meters_scrolled) : 0;
+
   return {
     todayMeters: parseFloat(todayMeters.toFixed(2)),
     todayBysite,
-    totalMeters: profile ? Number(profile.total_meters_scrolled) : 0,
+    totalMeters: parseFloat((totalFromDb + localMeters).toFixed(2)),
   };
 }

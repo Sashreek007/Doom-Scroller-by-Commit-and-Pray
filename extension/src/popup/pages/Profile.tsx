@@ -2,34 +2,61 @@ import { useState, useEffect } from 'react';
 import { supabase } from '@/shared/supabase';
 import type { Profile as ProfileType, Achievement } from '@/shared/types';
 
+const CACHE_KEY_PROFILE = 'cached_profile_';
+const CACHE_KEY_ACHIEVEMENTS = 'cached_achievements_';
+
 interface ProfileProps {
   userId: string;
   isOwnProfile: boolean;
   onBack?: () => void;
+  cachedProfile?: ProfileType | null;
 }
 
-export default function Profile({ userId, isOwnProfile, onBack }: ProfileProps) {
-  const [profile, setProfile] = useState<ProfileType | null>(null);
+export default function Profile({ userId, isOwnProfile, onBack, cachedProfile }: ProfileProps) {
+  const [profile, setProfile] = useState<ProfileType | null>(cachedProfile ?? null);
   const [achievements, setAchievements] = useState<Achievement[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!cachedProfile);
 
   useEffect(() => {
+    let mounted = true;
+
     async function load() {
+      // 1. Load from local cache first (instant)
+      if (!cachedProfile) {
+        const cached = await chrome.storage.local.get([
+          CACHE_KEY_PROFILE + userId,
+          CACHE_KEY_ACHIEVEMENTS + userId,
+        ]);
+        const cp = cached[CACHE_KEY_PROFILE + userId];
+        const ca = cached[CACHE_KEY_ACHIEVEMENTS + userId];
+        if (mounted && cp) { setProfile(cp); setLoading(false); }
+        if (mounted && ca) setAchievements(ca);
+      }
+      if (mounted && cachedProfile) setLoading(false);
+
+      // 2. Refresh from network in background
       const [profileRes, achievementsRes] = await Promise.all([
-        supabase.from('profiles').select('*').eq('id', userId).single(),
-        supabase
-          .from('achievements')
-          .select('*')
-          .eq('user_id', userId)
+        cachedProfile ? Promise.resolve(null) :
+          supabase.from('profiles').select('*').eq('id', userId).single(),
+        supabase.from('achievements').select('*').eq('user_id', userId)
           .order('earned_at', { ascending: false }),
       ]);
 
-      if (profileRes.data) setProfile(profileRes.data as ProfileType);
-      if (achievementsRes.data) setAchievements(achievementsRes.data as Achievement[]);
+      if (!mounted) return;
+
+      if (profileRes?.data) {
+        setProfile(profileRes.data as ProfileType);
+        chrome.storage.local.set({ [CACHE_KEY_PROFILE + userId]: profileRes.data });
+      }
+      if (achievementsRes.data) {
+        setAchievements(achievementsRes.data as Achievement[]);
+        chrome.storage.local.set({ [CACHE_KEY_ACHIEVEMENTS + userId]: achievementsRes.data });
+      }
       setLoading(false);
     }
     load();
-  }, [userId]);
+    return () => { mounted = false; };
+  }, [userId, cachedProfile]);
 
   if (loading) {
     return (
@@ -60,7 +87,6 @@ export default function Profile({ userId, isOwnProfile, onBack }: ProfileProps) 
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Back button for viewing other profiles */}
       {onBack && (
         <button
           onClick={onBack}
@@ -70,7 +96,6 @@ export default function Profile({ userId, isOwnProfile, onBack }: ProfileProps) 
         </button>
       )}
 
-      {/* Profile header */}
       <div className="text-center py-2">
         <div className="w-16 h-16 rounded-full bg-doom-surface border-2 border-neon-green/30 mx-auto mb-3 flex items-center justify-center">
           <span className="text-2xl">
@@ -88,7 +113,6 @@ export default function Profile({ userId, isOwnProfile, onBack }: ProfileProps) 
         )}
       </div>
 
-      {/* Stats */}
       <div className="grid grid-cols-2 gap-2">
         <div className="card text-center">
           <p className="text-doom-muted text-[10px] font-mono uppercase">Total Scrolled</p>
@@ -104,7 +128,6 @@ export default function Profile({ userId, isOwnProfile, onBack }: ProfileProps) 
         </div>
       </div>
 
-      {/* Achievements */}
       <div>
         <p className="text-doom-muted text-xs font-mono uppercase tracking-wider mb-2">
           Achievements ({achievements.length})
