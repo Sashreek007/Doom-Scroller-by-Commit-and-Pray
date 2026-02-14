@@ -133,13 +133,13 @@ export default function Friends({ userId, onViewProfile, onPendingRequestsChange
           {acceptanceNotices.map((notice) => (
             <div
               key={notice.userId}
-              className="rounded-lg border border-neon-cyan/40 bg-neon-cyan/10 px-3 py-2 flex items-center justify-between gap-2"
+              className="rounded-lg border border-neon-green/40 bg-neon-green/10 px-3 py-2 flex items-center justify-between gap-2"
             >
               <button
                 onClick={() => onViewProfile(notice.userId)}
                 className="flex-1 text-left"
               >
-                <p className="text-neon-cyan text-[11px] font-mono uppercase tracking-wider">
+                <p className="text-neon-green text-[11px] font-mono uppercase tracking-wider">
                   Friend request accepted
                 </p>
                 <p className="text-white text-xs">
@@ -148,7 +148,7 @@ export default function Friends({ userId, onViewProfile, onPendingRequestsChange
               </button>
               <button
                 onClick={() => dismissAcceptanceNotice(notice.userId)}
-                className="text-doom-muted hover:text-white text-xs px-2 py-1 rounded border border-doom-border hover:border-neon-cyan/40 transition-colors"
+                className="text-doom-muted hover:text-white text-xs px-2 py-1 rounded border border-doom-border hover:border-neon-green/40 transition-colors"
               >
                 Dismiss
               </button>
