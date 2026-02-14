@@ -8,6 +8,8 @@ interface LeaderboardProps {
 }
 
 type Tab = 'world' | 'friends';
+const LEADERBOARD_REFRESH_INTERVAL_MS = 2 * 60 * 1000;
+const LEADERBOARD_CACHE_TTL_MS = 2 * 60 * 1000;
 
 interface ProfileRow {
   id: string;
@@ -18,14 +20,61 @@ interface ProfileRow {
   is_public?: boolean;
 }
 
+interface LeaderboardData {
+  entries: LeaderboardEntry[];
+  myRank: LeaderboardEntry | null;
+}
+
+interface LeaderboardCachePayload extends LeaderboardData {
+  updatedAt: number;
+}
+
 export default function Leaderboard({ userId, onViewProfile }: LeaderboardProps) {
   const [tab, setTab] = useState<Tab>('world');
   const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
   const [myRank, setMyRank] = useState<LeaderboardEntry | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const cacheKey = `cached_leaderboard_${tab}_${userId}`;
 
-  const loadWorldLeaderboard = useCallback(async () => {
+  const loadWorldLeaderboard = useCallback(async (): Promise<LeaderboardData> => {
+    // Primary source: materialized view with precomputed global rank across DB users.
+    const { data: viewTop, error: viewTopError } = await withTimeout(async () => (
+      await supabase
+        .from('leaderboard_world')
+        .select('*')
+        .order('rank', { ascending: true })
+        .limit(50)
+    ));
+
+    if (!viewTopError && viewTop) {
+      const typedTop = (viewTop ?? []) as LeaderboardEntry[];
+
+      const meInTop = typedTop.find((entry) => entry.user_id === userId);
+      if (meInTop) {
+        return {
+          entries: typedTop,
+          myRank: meInTop,
+        };
+      }
+
+      const { data: myRankRow, error: myRankError } = await withTimeout(async () => (
+        await supabase
+          .from('leaderboard_world')
+          .select('*')
+          .eq('user_id', userId)
+          .maybeSingle()
+      ));
+
+      if (!myRankError) {
+        return {
+          entries: typedTop,
+          myRank: (myRankRow as LeaderboardEntry | null) ?? null,
+        };
+      }
+    }
+
+    // Fallback: rank public profiles live if view is unavailable or stale.
     const { data: topProfiles, error: topProfilesError } = await supabase
       .from('profiles')
       .select('id, username, display_name, avatar_url, total_meters_scrolled')
@@ -36,12 +85,13 @@ export default function Leaderboard({ userId, onViewProfile }: LeaderboardProps)
     if (topProfilesError) throw topProfilesError;
 
     const ranked = rankProfiles((topProfiles ?? []) as ProfileRow[]);
-    setEntries(ranked);
 
     const meInTop = ranked.find((entry) => entry.user_id === userId);
     if (meInTop) {
-      setMyRank(meInTop);
-      return;
+      return {
+        entries: ranked,
+        myRank: meInTop,
+      };
     }
 
     const { data: meProfile, error: meProfileError } = await supabase
@@ -51,8 +101,10 @@ export default function Leaderboard({ userId, onViewProfile }: LeaderboardProps)
       .single();
 
     if (meProfileError || !meProfile || !meProfile.is_public) {
-      setMyRank(null);
-      return;
+      return {
+        entries: ranked,
+        myRank: null,
+      };
     }
 
     const myMeters = Number(meProfile.total_meters_scrolled ?? 0);
@@ -64,17 +116,20 @@ export default function Leaderboard({ userId, onViewProfile }: LeaderboardProps)
 
     if (rankCountError) throw rankCountError;
 
-    setMyRank({
-      user_id: meProfile.id,
-      username: meProfile.username,
-      display_name: meProfile.display_name,
-      avatar_url: meProfile.avatar_url,
-      total_meters: myMeters,
-      rank: (count ?? 0) + 1,
-    });
+    return {
+      entries: ranked,
+      myRank: {
+        user_id: meProfile.id,
+        username: meProfile.username,
+        display_name: meProfile.display_name,
+        avatar_url: meProfile.avatar_url,
+        total_meters: myMeters,
+        rank: (count ?? 0) + 1,
+      },
+    };
   }, [userId]);
 
-  const loadFriendsLeaderboard = useCallback(async () => {
+  const loadFriendsLeaderboard = useCallback(async (): Promise<LeaderboardData> => {
     const { data: friendships, error: friendshipsError } = await supabase
       .from('friendships')
       .select('requester_id, addressee_id')
@@ -97,38 +152,83 @@ export default function Leaderboard({ userId, onViewProfile }: LeaderboardProps)
     if (profilesError) throw profilesError;
 
     const ranked = rankProfiles((profiles ?? []) as ProfileRow[]);
-    setEntries(ranked);
-    setMyRank(ranked.find((entry) => entry.user_id === userId) ?? null);
+    return {
+      entries: ranked,
+      myRank: ranked.find((entry) => entry.user_id === userId) ?? null,
+    };
   }, [userId]);
 
   useEffect(() => {
     let mounted = true;
+    let hasLoadedFromCache = false;
 
-    async function load() {
-      setLoading(true);
+    async function loadFromCache() {
+      const result = await chrome.storage.local.get(cacheKey);
+      const cached = result[cacheKey] as LeaderboardCachePayload | undefined;
+      if (!cached) return;
+      if ((Date.now() - cached.updatedAt) > LEADERBOARD_CACHE_TTL_MS) return;
+      if (!mounted) return;
+      hasLoadedFromCache = true;
+      setEntries(cached.entries);
+      setMyRank(cached.myRank);
+      setLoading(false);
+    }
+
+    async function saveToCache(data: LeaderboardData) {
+      const payload: LeaderboardCachePayload = {
+        ...data,
+        updatedAt: Date.now(),
+      };
+      await chrome.storage.local.set({ [cacheKey]: payload });
+    }
+
+    async function loadFromNetwork() {
       setError(null);
 
       try {
-        if (tab === 'world') {
-          await loadWorldLeaderboard();
-        } else {
-          await loadFriendsLeaderboard();
-        }
+        const data = tab === 'world'
+          ? await loadWorldLeaderboard()
+          : await loadFriendsLeaderboard();
+        if (!mounted) return;
+
+        setEntries(data.entries);
+        setMyRank(data.myRank);
+        setLoading(false);
+        void saveToCache(data);
       } catch (e) {
         if (!mounted) return;
-        setEntries([]);
-        setMyRank(null);
+        if (!hasLoadedFromCache) {
+          setEntries([]);
+          setMyRank(null);
+        }
         setError(e instanceof Error ? e.message : 'Failed to load leaderboard');
-      } finally {
-        if (mounted) setLoading(false);
+        setLoading(false);
       }
     }
 
-    void load();
+    async function init() {
+      setLoading(true);
+      await loadFromCache();
+      if (!mounted) return;
+      await loadFromNetwork();
+    }
+
+    void init();
+    const interval = setInterval(() => {
+      void loadFromNetwork();
+    }, LEADERBOARD_REFRESH_INTERVAL_MS);
+
     return () => {
       mounted = false;
+      clearInterval(interval);
     };
-  }, [loadFriendsLeaderboard, loadWorldLeaderboard, tab]);
+  }, [cacheKey, loadFriendsLeaderboard, loadWorldLeaderboard, tab]);
+
+  useEffect(() => {
+    if (!error) return;
+    const timeout = setTimeout(() => setError(null), 5000);
+    return () => clearTimeout(timeout);
+  }, [error]);
 
   return (
     <div className="flex flex-col gap-4">
@@ -224,6 +324,19 @@ export default function Leaderboard({ userId, onViewProfile }: LeaderboardProps)
       )}
     </div>
   );
+}
+
+async function withTimeout<T>(run: () => Promise<T>, timeoutMs = 4000): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error('Request timed out')), timeoutMs);
+  });
+
+  try {
+    return await Promise.race([run(), timeoutPromise]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
 }
 
 function formatMeters(m: number): string {
