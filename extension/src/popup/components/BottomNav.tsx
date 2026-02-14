@@ -37,10 +37,11 @@ const icons: Record<string, (props: { className?: string }) => JSX.Element> = {
   ),
   chat: ({ className }) => (
     <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-      <path d="M8 10h.01" />
-      <path d="M12 10h.01" />
-      <path d="M16 10h.01" />
+      <rect x="4" y="7" width="16" height="12" rx="3" />
+      <path d="M12 3v4" />
+      <path d="M9 12h.01" />
+      <path d="M15 12h.01" />
+      <path d="M8 16h8" />
     </svg>
   ),
 };
@@ -55,35 +56,55 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'board', label: 'Board' },
   { id: 'pals', label: 'Pals' },
   { id: 'battle', label: 'Battle' },
-  { id: 'chat', label: 'Chat' },
+  { id: 'chat', label: 'AI Chat' },
 ];
 
 interface BottomNavProps {
   active: string;
   onNavigate: (id: string) => void;
+  palsPendingCount?: number;
 }
 
-export default function BottomNav({ active, onNavigate }: BottomNavProps) {
+export default function BottomNav({ active, onNavigate, palsPendingCount = 0 }: BottomNavProps) {
   return (
     <nav className="flex items-center justify-around px-2 py-2 border-t border-doom-border bg-doom-bg">
       {NAV_ITEMS.map((item) => {
         const Icon = icons[item.id];
         const isActive = active === item.id;
+        const hasPendingPals = item.id === 'pals' && palsPendingCount > 0;
+        const textClass = hasPendingPals
+          ? 'text-red-400'
+          : isActive
+            ? 'text-neon-green'
+            : 'text-doom-muted hover:text-white';
+        const labelClass = hasPendingPals
+          ? 'text-red-400'
+          : isActive
+            ? 'neon-text-green'
+            : '';
+        const activeBarClass = hasPendingPals
+          ? 'bg-red-400 shadow-[0_0_8px_rgba(248,113,113,0.8)]'
+          : 'bg-neon-green shadow-neon-green';
+
         return (
           <button
             key={item.id}
             onClick={() => onNavigate(item.id)}
-            className={`flex flex-col items-center gap-0.5 px-3 py-1 rounded-lg transition-all duration-200
-              ${isActive ? 'text-neon-green' : 'text-doom-muted hover:text-white'}`}
+            className={`relative flex flex-col items-center gap-0.5 px-3 py-1 rounded-lg transition-all duration-200 ${textClass}`}
           >
             <Icon className="w-5 h-5" />
+            {hasPendingPals && (
+              <span className="absolute top-0 right-1 min-w-4 h-4 px-1 rounded-full bg-red-500 text-white text-[9px] leading-4 font-mono">
+                {palsPendingCount > 99 ? '99+' : palsPendingCount}
+              </span>
+            )}
             <span
-              className={`text-[10px] font-mono ${isActive ? 'neon-text-green' : ''}`}
+              className={`text-[10px] font-mono ${labelClass}`}
             >
               {item.label}
             </span>
             {isActive && (
-              <div className="w-4 h-0.5 bg-neon-green rounded-full shadow-neon-green" />
+              <div className={`w-4 h-0.5 rounded-full ${activeBarClass}`} />
             )}
           </button>
         );

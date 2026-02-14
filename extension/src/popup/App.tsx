@@ -9,6 +9,7 @@ import Friends from './pages/Friends';
 import Leaderboard from './pages/Leaderboard';
 import Settings from './pages/Settings';
 import BottomNav from './components/BottomNav';
+import { usePendingFriendRequestsCount } from './hooks/usePendingFriendRequestsCount';
 
 function App() {
   const {
@@ -25,6 +26,12 @@ function App() {
   const [authView, setAuthView] = useState<'login' | 'signup'>('login');
   const [activePage, setActivePage] = useState('home');
   const [viewingProfileId, setViewingProfileId] = useState<string | null>(null);
+  const { count: pendingRequestsCount, refresh: refreshPendingRequests } = usePendingFriendRequestsCount(user?.id ?? null);
+  const [pendingRequestsLocal, setPendingRequestsLocal] = useState(0);
+
+  useEffect(() => {
+    setPendingRequestsLocal(pendingRequestsCount);
+  }, [pendingRequestsCount]);
 
   useEffect(() => {
     // Prevent stale page state (for example, staying on Settings) across logout/login user changes.
@@ -107,6 +114,10 @@ function App() {
         return (
           <Friends
             userId={currentUser.id}
+            onPendingRequestsChanged={(count) => {
+              setPendingRequestsLocal(count);
+              void refreshPendingRequests();
+            }}
             onViewProfile={(id) => {
               setViewingProfileId(id);
               setActivePage('profile');
@@ -225,7 +236,11 @@ function App() {
         {renderPage()}
       </main>
 
-      <BottomNav active={activePage} onNavigate={setActivePage} />
+      <BottomNav
+        active={activePage}
+        onNavigate={setActivePage}
+        palsPendingCount={pendingRequestsLocal}
+      />
     </div>
   );
 }

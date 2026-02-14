@@ -1,16 +1,18 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useFriends } from '../hooks/useFriends';
 import type { Profile } from '@/shared/types';
 
 interface FriendsProps {
   userId: string;
   onViewProfile: (userId: string) => void;
+  onPendingRequestsChanged?: (count: number) => void;
 }
 
-export default function Friends({ userId, onViewProfile }: FriendsProps) {
+export default function Friends({ userId, onViewProfile, onPendingRequestsChanged }: FriendsProps) {
   const {
     friends,
     pendingReceived,
+    pendingSent,
     loading,
     sendRequest,
     acceptRequest,
@@ -22,6 +24,11 @@ export default function Friends({ userId, onViewProfile }: FriendsProps) {
   const [searchResults, setSearchResults] = useState<Profile[]>([]);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState('');
+  const [activeTab, setActiveTab] = useState<'friends' | 'requests'>('friends');
+
+  useEffect(() => {
+    onPendingRequestsChanged?.(pendingReceived.length);
+  }, [onPendingRequestsChanged, pendingReceived.length]);
 
   const handleSearch = async () => {
     if (searchQuery.length < 2) return;
@@ -53,6 +60,24 @@ export default function Friends({ userId, onViewProfile }: FriendsProps) {
     }
   };
 
+  const handleAcceptRequest = async (friendshipId: string) => {
+    setError('');
+    try {
+      await acceptRequest(friendshipId);
+    } catch {
+      setError('Failed to accept request');
+    }
+  };
+
+  const handleRejectRequest = async (friendshipId: string) => {
+    setError('');
+    try {
+      await rejectRequest(friendshipId);
+    } catch {
+      setError('Failed to reject request');
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -62,7 +87,7 @@ export default function Friends({ userId, onViewProfile }: FriendsProps) {
   }
 
   return (
-    <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-4">
       {/* Search */}
       <div>
         <div className="flex gap-2">
@@ -87,6 +112,29 @@ export default function Friends({ userId, onViewProfile }: FriendsProps) {
         {error && <p className="text-neon-pink text-xs mt-1">{error}</p>}
       </div>
 
+      <div className="grid grid-cols-2 gap-2">
+        <button
+          onClick={() => setActiveTab('friends')}
+          className={`rounded-lg border px-3 py-2 text-xs font-mono transition-colors ${
+            activeTab === 'friends'
+              ? 'border-neon-green/60 bg-neon-green/10 text-neon-green'
+              : 'border-doom-border bg-doom-surface text-doom-muted hover:text-white'
+          }`}
+        >
+          Friends ({friends.length})
+        </button>
+        <button
+          onClick={() => setActiveTab('requests')}
+          className={`rounded-lg border px-3 py-2 text-xs font-mono transition-colors ${
+            activeTab === 'requests'
+              ? 'border-red-400/60 bg-red-500/10 text-red-300'
+              : 'border-doom-border bg-doom-surface text-doom-muted hover:text-white'
+          }`}
+        >
+          Requests ({pendingReceived.length})
+        </button>
+      </div>
+
       {/* Search results */}
       {searchResults.length > 0 && (
         <div>
@@ -96,6 +144,8 @@ export default function Friends({ userId, onViewProfile }: FriendsProps) {
           <div className="space-y-2">
             {searchResults.map((user) => {
               const alreadyFriend = friends.some((f) => f.profile.id === user.id);
+              const alreadyRequested = pendingSent.some((f) => f.profile.id === user.id);
+              const requestedYou = pendingReceived.some((f) => f.profile.id === user.id);
               return (
                 <div key={user.id} className="card flex items-center justify-between">
                   <button
@@ -110,6 +160,15 @@ export default function Friends({ userId, onViewProfile }: FriendsProps) {
                   </button>
                   {alreadyFriend ? (
                     <span className="text-neon-green text-xs">✓ Friends</span>
+                  ) : requestedYou ? (
+                    <button
+                      onClick={() => setActiveTab('requests')}
+                      className="text-red-300 text-xs border border-red-400/40 rounded px-2 py-1 hover:bg-red-500/10 transition-colors"
+                    >
+                      Respond
+                    </button>
+                  ) : alreadyRequested ? (
+                    <span className="text-doom-muted text-xs">Requested</span>
                   ) : (
                     <button
                       onClick={() => handleSendRequest(user.id)}
@@ -125,79 +184,115 @@ export default function Friends({ userId, onViewProfile }: FriendsProps) {
         </div>
       )}
 
-      {/* Pending requests received */}
-      {pendingReceived.length > 0 && (
+      {activeTab === 'friends' ? (
         <div>
           <p className="text-doom-muted text-xs font-mono uppercase tracking-wider mb-2">
-            Friend Requests ({pendingReceived.length})
+            Friends ({friends.length})
           </p>
-          <div className="space-y-2">
-            {pendingReceived.map(({ friendship, profile }) => (
-              <div key={friendship.id} className="card flex items-center justify-between">
+          {friends.length > 0 ? (
+            <div className="space-y-2">
+              {friends.map(({ profile }) => (
                 <button
+                  key={profile.id}
                   onClick={() => onViewProfile(profile.id)}
-                  className="flex items-center gap-2 hover:text-neon-cyan transition-colors"
+                  className="card flex items-center gap-3 w-full text-left hover:border-neon-green/30 transition-colors"
                 >
                   <span className="text-lg">💀</span>
-                  <div className="text-left">
+                  <div className="flex-1">
                     <p className="text-sm font-medium">{profile.display_name}</p>
                     <p className="text-doom-muted text-xs font-mono">@{profile.username}</p>
                   </div>
+                  <span className="text-doom-muted text-xs font-mono">
+                    {profile.total_meters_scrolled < 1000
+                      ? `${Math.round(profile.total_meters_scrolled)}m`
+                      : `${(profile.total_meters_scrolled / 1000).toFixed(1)}km`}
+                  </span>
                 </button>
-                <div className="flex gap-1">
-                  <button
-                    onClick={() => acceptRequest(friendship.id)}
-                    className="btn-primary text-xs px-2 py-1"
-                  >
-                    ✓
-                  </button>
-                  <button
-                    onClick={() => rejectRequest(friendship.id)}
-                    className="btn-danger text-xs px-2 py-1"
-                  >
-                    ✕
-                  </button>
-                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="card text-center py-4">
+              <p className="text-doom-muted text-xs">
+                No friends yet. Search for someone above.
+              </p>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <div>
+            <p className="text-doom-muted text-xs font-mono uppercase tracking-wider mb-2">
+              Incoming ({pendingReceived.length})
+            </p>
+            {pendingReceived.length > 0 ? (
+              <div className="space-y-2">
+                {pendingReceived.map(({ friendship, profile }) => (
+                  <div key={friendship.id} className="card flex items-center justify-between">
+                    <button
+                      onClick={() => onViewProfile(profile.id)}
+                      className="flex items-center gap-2 hover:text-neon-cyan transition-colors"
+                    >
+                      <span className="text-lg">💀</span>
+                      <div className="text-left">
+                        <p className="text-sm font-medium">{profile.display_name}</p>
+                        <p className="text-doom-muted text-xs font-mono">@{profile.username}</p>
+                      </div>
+                    </button>
+                    <div className="flex gap-1">
+                      <button
+                        onClick={() => handleAcceptRequest(friendship.id)}
+                        className="btn-primary text-xs px-2 py-1"
+                      >
+                        Accept
+                      </button>
+                      <button
+                        onClick={() => handleRejectRequest(friendship.id)}
+                        className="btn-danger text-xs px-2 py-1"
+                      >
+                        Reject
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
-            ))}
+            ) : (
+              <div className="card text-center py-4">
+                <p className="text-doom-muted text-xs">No incoming requests.</p>
+              </div>
+            )}
+          </div>
+
+          <div>
+            <p className="text-doom-muted text-xs font-mono uppercase tracking-wider mb-2">
+              Sent ({pendingSent.length})
+            </p>
+            {pendingSent.length > 0 ? (
+              <div className="space-y-2">
+                {pendingSent.map(({ friendship, profile }) => (
+                  <button
+                    key={friendship.id}
+                    onClick={() => onViewProfile(profile.id)}
+                    className="card flex items-center justify-between w-full text-left hover:border-neon-cyan/30 transition-colors"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">💀</span>
+                      <div className="text-left">
+                        <p className="text-sm font-medium">{profile.display_name}</p>
+                        <p className="text-doom-muted text-xs font-mono">@{profile.username}</p>
+                      </div>
+                    </div>
+                    <span className="text-doom-muted text-xs font-mono">Pending</span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="card text-center py-4">
+                <p className="text-doom-muted text-xs">No pending sent requests.</p>
+              </div>
+            )}
           </div>
         </div>
       )}
-
-      {/* Friend list */}
-      <div>
-        <p className="text-doom-muted text-xs font-mono uppercase tracking-wider mb-2">
-          Friends ({friends.length})
-        </p>
-        {friends.length > 0 ? (
-          <div className="space-y-2">
-            {friends.map(({ profile }) => (
-              <button
-                key={profile.id}
-                onClick={() => onViewProfile(profile.id)}
-                className="card flex items-center gap-3 w-full text-left hover:border-neon-green/30 transition-colors"
-              >
-                <span className="text-lg">💀</span>
-                <div className="flex-1">
-                  <p className="text-sm font-medium">{profile.display_name}</p>
-                  <p className="text-doom-muted text-xs font-mono">@{profile.username}</p>
-                </div>
-                <span className="text-doom-muted text-xs font-mono">
-                  {profile.total_meters_scrolled < 1000
-                    ? `${Math.round(profile.total_meters_scrolled)}m`
-                    : `${(profile.total_meters_scrolled / 1000).toFixed(1)}km`}
-                </span>
-              </button>
-            ))}
-          </div>
-        ) : (
-          <div className="card text-center py-4">
-            <p className="text-doom-muted text-xs">
-              No friends yet. Search for someone above.
-            </p>
-          </div>
-        )}
-      </div>
     </div>
   );
 }
