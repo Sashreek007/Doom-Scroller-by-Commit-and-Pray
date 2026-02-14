@@ -1,7 +1,6 @@
 import { useMemo } from 'react';
 import { useScrollStats } from '../hooks/useScrollStats';
 import SiteCard from '../components/SiteCard';
-import { SCROLL_COMPARISONS } from '@/shared/constants';
 
 const FUN_COMPARISONS = [
   (m: number) => `That's ${(m / 91.44).toFixed(1)} football fields`,
@@ -78,7 +77,10 @@ export default function Dashboard() {
       {/* Empty state */}
       {stats.todayMeters === 0 && stats.totalMeters === 0 && (
         <div className="text-center py-6">
-          <p className="text-3xl mb-2">📱</p>
+          <svg className="w-8 h-8 mx-auto mb-2 text-doom-muted" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+            <rect x="5" y="2" width="14" height="20" rx="2" ry="2" />
+            <line x1="12" y1="18" x2="12.01" y2="18" />
+          </svg>
           <p className="text-doom-muted text-sm">
             Open a social media site and start scrolling.
           </p>

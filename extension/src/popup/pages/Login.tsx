@@ -8,6 +8,7 @@ interface LoginProps {
 export default function Login({ onSignIn, onSwitchToSignUp }: LoginProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -25,7 +26,7 @@ export default function Login({ onSignIn, onSwitchToSignUp }: LoginProps) {
   };
 
   return (
-    <div className="flex flex-col items-center justify-center h-full px-8">
+    <div className="flex flex-col items-center pt-10 h-full px-8">
       <p className="text-5xl mb-2">💀</p>
       <h1 className="text-2xl font-bold font-mono neon-text-green mb-1">
         DoomScroller
@@ -47,18 +48,25 @@ export default function Login({ onSignIn, onSwitchToSignUp }: LoginProps) {
                        focus:outline-none focus:border-neon-green/50 transition-colors"
           />
         </div>
-        <div>
+        <div className="relative">
           <input
-            type="password"
+            type={showPassword ? 'text' : 'password'}
             placeholder="Password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
             minLength={6}
-            className="w-full bg-doom-surface border border-doom-border rounded-lg px-4 py-3
+            className="w-full bg-doom-surface border border-doom-border rounded-lg px-4 py-3 pr-10
                        text-white placeholder-doom-muted text-sm
                        focus:outline-none focus:border-neon-green/50 transition-colors"
           />
+          <button
+            type="button"
+            onClick={() => setShowPassword(!showPassword)}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-doom-muted hover:text-white text-xs transition-colors"
+          >
+            {showPassword ? 'Hide' : 'Show'}
+          </button>
         </div>
 
         {error && (

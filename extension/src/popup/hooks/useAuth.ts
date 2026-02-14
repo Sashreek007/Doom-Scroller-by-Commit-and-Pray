@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '@/shared/supabase';
 import type { User, Session } from '@supabase/supabase-js';
 import type { Profile } from '@/shared/types';
@@ -17,40 +17,60 @@ export function useAuth() {
     session: null,
     loading: true,
   });
+  const loadedUserId = useRef<string | null>(null);
 
-  const fetchProfile = useCallback(async (userId: string) => {
-    const { data } = await supabase
+  const fetchProfile = useCallback(async (userId: string): Promise<Profile | null> => {
+    const { data, error } = await supabase
       .from('profiles')
       .select('*')
       .eq('id', userId)
       .single();
+    if (error) console.warn('[DoomScroller] fetchProfile error:', error.message);
     return data as Profile | null;
   }, []);
 
   useEffect(() => {
-    // Get initial session
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
+    let mounted = true;
+
+    async function loadSession(session: Session | null) {
+      if (!mounted) return;
       if (session?.user) {
-        const profile = await fetchProfile(session.user.id);
-        setState({ user: session.user, profile, session, loading: false });
+        if (loadedUserId.current === session.user.id) {
+          setState((prev) => ({ ...prev, session, loading: false }));
+          return;
+        }
+        // Show UI immediately with user, fetch profile in background
+        loadedUserId.current = session.user.id;
+        setState((prev) => ({ ...prev, user: session.user, session, loading: false }));
+        const profile = await fetchProfile(session.user.id).catch(() => null);
+        if (mounted) setState((prev) => ({ ...prev, profile }));
       } else {
+        loadedUserId.current = null;
         setState({ user: null, profile: null, session: null, loading: false });
       }
-    });
+    }
 
-    // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (_event, session) => {
-        if (session?.user) {
-          const profile = await fetchProfile(session.user.id);
-          setState({ user: session.user, profile, session, loading: false });
-        } else {
-          setState({ user: null, profile: null, session: null, loading: false });
-        }
+        await loadSession(session);
       },
     );
 
-    return () => subscription.unsubscribe();
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      loadSession(session);
+    });
+
+    const timeout = setTimeout(() => {
+      if (mounted) {
+        setState((prev) => prev.loading ? { ...prev, loading: false } : prev);
+      }
+    }, 5000);
+
+    return () => {
+      mounted = false;
+      clearTimeout(timeout);
+      subscription.unsubscribe();
+    };
   }, [fetchProfile]);
 
   const signUp = async (email: string, password: string, displayName: string) => {
@@ -71,6 +91,15 @@ export function useAuth() {
       password,
     });
     if (error) throw error;
+    // Immediately update state so UI transitions without waiting for onAuthStateChange
+    if (data.session?.user) {
+      loadedUserId.current = data.session.user.id;
+      setState({ user: data.session.user, profile: null, session: data.session, loading: false });
+      // Fetch profile in background
+      fetchProfile(data.session.user.id).then((profile) => {
+        setState((prev) => ({ ...prev, profile }));
+      }).catch(() => {});
+    }
     return data;
   };
 
@@ -86,6 +115,7 @@ export function useAuth() {
       .update({ username: username.toLowerCase() })
       .eq('id', state.user.id);
     if (error) throw error;
+    loadedUserId.current = null;
     const profile = await fetchProfile(state.user.id);
     setState((prev) => ({ ...prev, profile }));
   };

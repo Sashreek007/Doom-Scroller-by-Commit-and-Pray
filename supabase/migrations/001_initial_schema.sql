@@ -22,12 +22,16 @@ CREATE TABLE public.profiles (
 -- Auto-create profile when a new user signs up
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER AS $$
+DECLARE
+    base_name TEXT;
 BEGIN
+    -- Replace non-alphanumeric chars with underscore, truncate to 15 chars to leave room for suffix
+    base_name := LEFT(REGEXP_REPLACE(LOWER(SPLIT_PART(NEW.email, '@', 1)), '[^a-z0-9]', '_', 'g'), 15);
+
     INSERT INTO public.profiles (id, username, display_name)
     VALUES (
         NEW.id,
-        -- Generate temp username from email prefix + random suffix
-        LOWER(SPLIT_PART(NEW.email, '@', 1)) || '_' || SUBSTR(MD5(RANDOM()::TEXT), 1, 4),
+        base_name || '_' || SUBSTR(MD5(RANDOM()::TEXT), 1, 4),
         COALESCE(NEW.raw_user_meta_data->>'display_name', SPLIT_PART(NEW.email, '@', 1))
     );
     RETURN NEW;

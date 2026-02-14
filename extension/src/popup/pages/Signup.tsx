@@ -10,9 +10,9 @@ export default function Signup({ onSignUp, onSwitchToLogin }: SignupProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [success, setSuccess] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -36,7 +36,6 @@ export default function Signup({ onSignUp, onSwitchToLogin }: SignupProps) {
     setLoading(true);
     try {
       await onSignUp(email, password, displayName);
-      setSuccess(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to sign up');
     } finally {
@@ -44,25 +43,8 @@ export default function Signup({ onSignUp, onSwitchToLogin }: SignupProps) {
     }
   };
 
-  if (success) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full px-8">
-        <p className="text-5xl mb-4">✅</p>
-        <h2 className="text-lg font-bold font-mono neon-text-green mb-2">
-          Almost there!
-        </h2>
-        <p className="text-doom-muted text-xs text-center mb-6">
-          Check your email to confirm your account, then sign in.
-        </p>
-        <button onClick={onSwitchToLogin} className="btn-primary text-sm">
-          Go to Sign In
-        </button>
-      </div>
-    );
-  }
-
   return (
-    <div className="flex flex-col items-center justify-center h-full px-8">
+    <div className="flex flex-col items-center pt-8 h-full px-8">
       <p className="text-5xl mb-2">💀</p>
       <h1 className="text-2xl font-bold font-mono neon-text-green mb-1">
         Join the Doom
@@ -92,19 +74,28 @@ export default function Signup({ onSignUp, onSwitchToLogin }: SignupProps) {
                      text-white placeholder-doom-muted text-sm
                      focus:outline-none focus:border-neon-green/50 transition-colors"
         />
+        <div className="relative">
+          <input
+            type={showPassword ? 'text' : 'password'}
+            placeholder="Password (min 6 chars)"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+            minLength={6}
+            className="w-full bg-doom-surface border border-doom-border rounded-lg px-4 py-3 pr-10
+                       text-white placeholder-doom-muted text-sm
+                       focus:outline-none focus:border-neon-green/50 transition-colors"
+          />
+          <button
+            type="button"
+            onClick={() => setShowPassword(!showPassword)}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-doom-muted hover:text-white text-xs transition-colors"
+          >
+            {showPassword ? 'Hide' : 'Show'}
+          </button>
+        </div>
         <input
-          type="password"
-          placeholder="Password (min 6 chars)"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          required
-          minLength={6}
-          className="w-full bg-doom-surface border border-doom-border rounded-lg px-4 py-3
-                     text-white placeholder-doom-muted text-sm
-                     focus:outline-none focus:border-neon-green/50 transition-colors"
-        />
-        <input
-          type="password"
+          type={showPassword ? 'text' : 'password'}
           placeholder="Confirm Password"
           value={confirmPassword}
           onChange={(e) => setConfirmPassword(e.target.value)}
