@@ -39,39 +39,47 @@ export default function Leaderboard({ userId, onViewProfile }: LeaderboardProps)
 
   const loadWorldLeaderboard = useCallback(async (): Promise<LeaderboardData> => {
     // Primary source: materialized view with precomputed global rank across DB users.
-    const { data: viewTop, error: viewTopError } = await withTimeout(async () => (
-      await supabase
-        .from('leaderboard_world')
-        .select('*')
-        .order('rank', { ascending: true })
-        .limit(50)
-    ));
-
-    if (!viewTopError && viewTop) {
-      const typedTop = (viewTop ?? []) as LeaderboardEntry[];
-
-      const meInTop = typedTop.find((entry) => entry.user_id === userId);
-      if (meInTop) {
-        return {
-          entries: typedTop,
-          myRank: meInTop,
-        };
-      }
-
-      const { data: myRankRow, error: myRankError } = await withTimeout(async () => (
+    try {
+      const { data: viewTop, error: viewTopError } = await withTimeout(async () => (
         await supabase
           .from('leaderboard_world')
           .select('*')
-          .eq('user_id', userId)
-          .maybeSingle()
+          .order('rank', { ascending: true })
+          .limit(50)
       ));
 
-      if (!myRankError) {
-        return {
-          entries: typedTop,
-          myRank: (myRankRow as LeaderboardEntry | null) ?? null,
-        };
+      if (!viewTopError && viewTop) {
+        const typedTop = (viewTop ?? []) as LeaderboardEntry[];
+
+        const meInTop = typedTop.find((entry) => entry.user_id === userId);
+        if (meInTop) {
+          return {
+            entries: typedTop,
+            myRank: meInTop,
+          };
+        }
+
+        try {
+          const { data: myRankRow, error: myRankError } = await withTimeout(async () => (
+            await supabase
+              .from('leaderboard_world')
+              .select('*')
+              .eq('user_id', userId)
+              .maybeSingle()
+          ));
+
+          if (!myRankError) {
+            return {
+              entries: typedTop,
+              myRank: (myRankRow as LeaderboardEntry | null) ?? null,
+            };
+          }
+        } catch {
+          // Continue to profile-based fallback below.
+        }
       }
+    } catch {
+      // View timed out/unavailable. Continue to profile-based fallback below.
     }
 
     // Fallback: rank public profiles live if view is unavailable or stale.
