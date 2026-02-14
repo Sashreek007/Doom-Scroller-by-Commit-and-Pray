@@ -2,7 +2,7 @@
 
 We help people who lose hours on social feeds turn invisible doomscrolling into visible, trackable behavior using live distance tracking, social game mechanics, and AI-powered roast feedback.
 
-> **Disclaimer:** This browser extension may not work on managed office/school Wi-Fi (for example, UBS-like corporate networks) because DNS/content filtering can block Supabase domains (`*.supabase.co`), which breaks login and AI features. For reliable behavior, aggressive browser tracking protection/shields should be turned off for this extension.
+> **Disclaimer:** This browser extension may not work on managed office/school Wi-Fi (for example, UWS-like corporate networks) because DNS/content filtering can block Supabase domains (`*.supabase.co`), which breaks login and AI features. Practical workaround: switch to a personal mobile hotspot (or another unfiltered network). For reliable behavior, aggressive browser tracking protection/shields should be turned off for this extension.
 
 ---
 
@@ -10,6 +10,32 @@ We help people who lose hours on social feeds turn invisible doomscrolling into 
 
 * 🔗 **Live Application:** [ADD_URL_HERE]
 * 🎬 **Demo Video (60–90s):** [ADD_VIDEO_URL_HERE]
+
+---
+
+## ⚡ Quick Start (Install in 2 Minutes)
+
+```bash
+git clone https://github.com/Sashreek007/Doom-Scroller-by-Commit-and-Pray.git doomscroller
+cd doomscroller
+npm install
+cd extension
+npm run build
+```
+
+Load the extension in browser:
+
+1. Open `chrome://extensions`
+2. Enable **Developer mode**
+3. Click **Load unpacked**
+4. Select `doomscroller/extension/dist`
+
+After loading and signing in, you are connected to the live online database, so you can:
+
+* appear on the world leaderboard
+* add friends
+* create/join battle rooms with room codes and play games
+* use AI chat and AI-powered achievement behavior
 
 ---
 
@@ -253,32 +279,6 @@ Safety/control approach:
 * **AI:** Gemini (through Edge Functions)
 * **Extension Platform:** Chrome Extension MV3 (service worker + content scripts)
 * **Build Tooling:** Vite
-
----
-
-## ⚡ Setup & Run Locally
-
-```bash
-git clone [YOUR_REPO_URL]
-cd doomscroller
-npm install
-cd extension
-npm run build
-```
-
-Load the extension in browser:
-
-1. Open `chrome://extensions`
-2. Enable Developer mode
-3. Click Load unpacked
-4. Select the `dist` folder at `doomscroller/extension/dist`
-
-That’s it. Running it this way connects to the live online database by default, so after you sign in you can:
-
-* appear on the world leaderboard
-* add friends
-* create/join battle rooms and play games
-* use AI chat and AI-powered achievement behavior
 
 ---
 
