@@ -296,7 +296,9 @@ export default function Profile({
       ? Math.max(Number(profile.total_meters_scrolled ?? 0), liveTotalMeters)
       : Number(profile.total_meters_scrolled ?? 0)
   );
-  const coins = metersToCoins(totalMetersForDisplay);
+  const coins = Number.isFinite(Number(profile.coin_balance))
+    ? Math.max(0, Math.floor(Number(profile.coin_balance)))
+    : metersToCoins(totalMetersForDisplay);
 
   return (
     <div className="flex flex-col gap-4">

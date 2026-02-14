@@ -14,6 +14,7 @@ interface BattleProps {
   displayName: string;
   avatarUrl: string | null;
   availableCoins: number;
+  onWalletSync?: () => void | Promise<void>;
 }
 
 interface BattleRoomRow {
@@ -26,6 +27,7 @@ interface BattleRoomRow {
   selected_game_type: GameTypeKey | null;
   round_started_at: string | null;
   round_ends_at: string | null;
+  round_result: unknown | null;
   max_players: number;
   created_at: string;
   updated_at: string;
@@ -39,6 +41,8 @@ interface BattleRoomMemberRow {
   status: BattleMemberStatus;
   joined_at: string;
   left_at: string | null;
+  round_start_meters: number;
+  round_score_meters: number;
 }
 
 interface BattlePlayer {
@@ -48,6 +52,18 @@ interface BattlePlayer {
   avatarUrl: string | null;
   joinedAt: string;
   role: BattleMemberRole;
+  totalMeters: number;
+  roundStartMeters: number;
+  roundScoreMeters: number;
+}
+
+interface BattleRoundResult {
+  settledAt: string;
+  pot: number;
+  betCoins: number;
+  winnerIds: string[];
+  payouts: Record<string, number>;
+  scores: Record<string, number>;
 }
 
 interface BattleGameOption {
@@ -143,10 +159,55 @@ function formatCountdownFromMs(ms: number): string {
   return `${minutes}:${seconds.toString().padStart(2, '0')}`;
 }
 
+function parseRoundResult(value: unknown): BattleRoundResult | null {
+  if (!value || typeof value !== 'object') return null;
+  const row = value as Record<string, unknown>;
+
+  const settledAt = typeof row.settledAt === 'string' ? row.settledAt : null;
+  const pot = Number(row.pot);
+  const betCoins = Number(row.betCoins);
+  const winnerIdsRaw = Array.isArray(row.winnerIds) ? row.winnerIds : [];
+  const payoutsRaw = row.payouts && typeof row.payouts === 'object' ? row.payouts as Record<string, unknown> : {};
+  const scoresRaw = row.scores && typeof row.scores === 'object' ? row.scores as Record<string, unknown> : {};
+
+  if (!settledAt || !Number.isFinite(pot) || !Number.isFinite(betCoins)) return null;
+
+  const winnerIds = winnerIdsRaw
+    .filter((entry): entry is string => typeof entry === 'string');
+
+  const payouts: Record<string, number> = {};
+  for (const [key, raw] of Object.entries(payoutsRaw)) {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed)) payouts[key] = parsed;
+  }
+
+  const scores: Record<string, number> = {};
+  for (const [key, raw] of Object.entries(scoresRaw)) {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed)) scores[key] = parsed;
+  }
+
+  return {
+    settledAt,
+    pot: Math.max(0, Math.floor(pot)),
+    betCoins: Math.max(0, Math.floor(betCoins)),
+    winnerIds,
+    payouts,
+    scores,
+  };
+}
+
+function formatMeters(value: number): string {
+  if (!Number.isFinite(value)) return '0m';
+  if (value < 1000) return `${value.toFixed(1)}m`;
+  return `${(value / 1000).toFixed(2)}km`;
+}
+
 function parseDbError(error: PostgrestError | null): string {
   if (!error) return 'Unexpected database error';
   if (error.code === '42P01') return 'Battle tables are not deployed yet. Run latest migration.';
   if (error.code === '23505') return 'Duplicate value conflict. Try again.';
+  if (error.code === '42501') return 'Permission denied by database policy.';
   return error.message || 'Unexpected database error';
 }
 
@@ -160,6 +221,7 @@ export default function Battle({
   displayName,
   avatarUrl,
   availableCoins,
+  onWalletSync,
 }: BattleProps) {
   const [roomKeyInput, setRoomKeyInput] = useState('');
   const [room, setRoom] = useState<BattleRoomRow | null>(null);
@@ -171,11 +233,14 @@ export default function Battle({
   const [info, setInfo] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [nowTs, setNowTs] = useState(() => Date.now());
+  const [resultOverlay, setResultOverlay] = useState<BattleRoundResult | null>(null);
 
   const refreshTimeoutRef = useRef<number | null>(null);
   const roomSubRef = useRef<RealtimeChannel | null>(null);
   const refreshInFlightRef = useRef(false);
   const queuedRefreshRef = useRef(false);
+  const autoFinalizeRef = useRef<string | null>(null);
+  const shownResultKeyRef = useRef<string | null>(null);
 
   const isHost = Boolean(room && room.host_id === userId);
   const maxPlayers = room?.max_players ?? DEFAULT_MAX_PLAYERS;
@@ -183,6 +248,14 @@ export default function Battle({
   const roomIsFull = rankedPlayers.length >= maxPlayers;
   const canStart = isHost && room?.status === 'lobby' && rankedPlayers.length >= 2;
   const selectedRules = room?.selected_game_type ? GAME_RULES[room.selected_game_type] : [];
+  const latestRoundResult = parseRoundResult(room?.round_result ?? null);
+  const playerNameById = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const player of rankedPlayers) {
+      map[player.userId] = player.displayName;
+    }
+    return map;
+  }, [rankedPlayers]);
   const roundStartsAtMs = room?.round_started_at ? new Date(room.round_started_at).getTime() : null;
   const roundEndsAtMs = room?.round_ends_at ? new Date(room.round_ends_at).getTime() : null;
   const isPrestartPhase = room?.status === 'active' && roundStartsAtMs != null && nowTs < roundStartsAtMs;
@@ -194,6 +267,15 @@ export default function Battle({
   const isRoundComplete = room?.status === 'active' && roundEndsAtMs != null && nowTs >= roundEndsAtMs;
   const prestartRemainingMs = isPrestartPhase && roundStartsAtMs != null ? roundStartsAtMs - nowTs : 0;
   const roundRemainingMs = isRoundLive && roundEndsAtMs != null ? roundEndsAtMs - nowTs : 0;
+  const liveStandings = useMemo(() => {
+    if (room?.selected_game_type !== 'scroll_sprint') return [] as Array<{ userId: string; score: number }>;
+    return [...rankedPlayers]
+      .map((player) => ({
+        userId: player.userId,
+        score: Math.max(0, Number(player.totalMeters) - Number(player.roundStartMeters)),
+      }))
+      .sort((left, right) => right.score - left.score);
+  }, [rankedPlayers, room?.selected_game_type]);
 
   const clearRoomState = useCallback(() => {
     setRoom(null);
@@ -252,12 +334,15 @@ export default function Battle({
     const typedMembers = (memberRows as BattleRoomMemberRow[] | null) ?? [];
 
     const profileIds = typedMembers.map((member) => member.user_id);
-    let profileMap = new Map<string, { username: string; display_name: string; avatar_url: string | null }>();
+    let profileMap = new Map<
+      string,
+      { username: string; display_name: string; avatar_url: string | null; total_meters_scrolled: number }
+    >();
 
     if (profileIds.length > 0) {
       const { data: profileRows, error: profileError } = await supabase
         .from('profiles')
-        .select('id, username, display_name, avatar_url')
+        .select('id, username, display_name, avatar_url, total_meters_scrolled')
         .in('id', profileIds);
 
       if (profileError) throw new Error(parseDbError(profileError));
@@ -267,6 +352,7 @@ export default function Battle({
           username: (row.username as string) ?? 'user',
           display_name: (row.display_name as string) ?? 'User',
           avatar_url: (row.avatar_url as string | null) ?? null,
+          total_meters_scrolled: Number(row.total_meters_scrolled ?? 0),
         });
       }
     }
@@ -281,6 +367,9 @@ export default function Battle({
         avatarUrl: profile?.avatar_url ?? (isSelf ? avatarUrl : null),
         joinedAt: member.joined_at,
         role: member.role,
+        totalMeters: Number(profile?.total_meters_scrolled ?? 0),
+        roundStartMeters: Number(member.round_start_meters ?? 0),
+        roundScoreMeters: Number(member.round_score_meters ?? 0),
       } satisfies BattlePlayer;
     });
 
@@ -420,6 +509,23 @@ export default function Battle({
       window.clearInterval(interval);
     };
   }, [room?.status]);
+
+  useEffect(() => {
+    if (!latestRoundResult || !room?.id) return;
+    const resultKey = `${room.id}:${latestRoundResult.settledAt}`;
+    if (shownResultKeyRef.current === resultKey) return;
+    shownResultKeyRef.current = resultKey;
+    setResultOverlay(latestRoundResult);
+    void onWalletSync?.();
+
+    const timeout = window.setTimeout(() => {
+      setResultOverlay(null);
+    }, 5200);
+
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [latestRoundResult, onWalletSync, room?.id]);
 
   const createRoom = useCallback(async () => {
     setJoining(true);
@@ -706,17 +812,23 @@ export default function Battle({
       setError('Host must select a game type first.');
       return;
     }
-
-    const startAt = Date.now() + PRESTART_SECONDS * 1000;
-    const endAt = startAt + room.timer_seconds * 1000;
-
-    await updateRoomSetup({
-      status: 'active',
-      round_started_at: new Date(startAt).toISOString(),
-      round_ends_at: new Date(endAt).toISOString(),
-    });
-    setInfo(`Round starts in ${PRESTART_SECONDS}s. Read the rules.`);
-  }, [isHost, room, updateRoomSetup]);
+    setWorking(true);
+    setError(null);
+    try {
+      const { error: rpcError } = await supabase.rpc('start_battle_round', {
+        p_room_id: room.id,
+        p_prestart_seconds: PRESTART_SECONDS,
+      });
+      if (rpcError) throw new Error(parseDbError(rpcError));
+      await refreshRoom(room.id);
+      setInfo(`Round starts in ${PRESTART_SECONDS}s. Read rules before go time.`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to start round';
+      setError(message);
+    } finally {
+      setWorking(false);
+    }
+  }, [isHost, refreshRoom, room]);
 
   const handleBackToGameSelect = useCallback(async () => {
     if (!room || !isHost) return;
@@ -727,6 +839,34 @@ export default function Battle({
     });
   }, [isHost, room, updateRoomSetup]);
 
+  const finalizeRound = useCallback(async () => {
+    if (!room || !isHost) return;
+    setWorking(true);
+    setError(null);
+    try {
+      const { error: rpcError } = await supabase.rpc('finalize_battle_round', {
+        p_room_id: room.id,
+      });
+      if (rpcError) throw new Error(parseDbError(rpcError));
+      await refreshRoom(room.id);
+      setInfo('Round settled. Coins moved.');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to finalize round';
+      setError(message);
+      autoFinalizeRef.current = null;
+    } finally {
+      setWorking(false);
+    }
+  }, [isHost, refreshRoom, room]);
+
+  useEffect(() => {
+    if (!room || !isHost || !isRoundComplete) return;
+    const finalizeKey = `${room.id}:${room.round_ends_at ?? ''}`;
+    if (autoFinalizeRef.current === finalizeKey) return;
+    autoFinalizeRef.current = finalizeKey;
+    void finalizeRound();
+  }, [finalizeRound, isHost, isRoundComplete, room]);
+
   if (loadingRoom) {
     return (
       <div className="card text-center py-8">
@@ -736,9 +876,16 @@ export default function Battle({
   }
 
   const showSetup = !room;
+  const overlayIsWinner = resultOverlay ? resultOverlay.winnerIds.includes(userId) : false;
+  const overlayNetCoins = Math.floor(Number(resultOverlay?.payouts[userId] ?? 0));
+  const overlayHeadline = overlayIsWinner ? 'YOU WIN' : 'BETTER LUCK NEXT TIME';
+  const overlaySubline = overlayIsWinner
+    ? `+${Math.max(0, overlayNetCoins)} coins`
+    : `${overlayNetCoins} coins`;
+  const confettiColors = ['#39ff14', '#facc15', '#00f0ff', '#ff2d78', '#ffffff'];
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="relative flex flex-col gap-4">
       {showSetup ? (
         <>
           <div className="card">
@@ -978,6 +1125,26 @@ export default function Battle({
                 </div>
               )}
 
+              {latestRoundResult && (
+                <div className="mt-3 rounded-lg border border-doom-border bg-doom-bg/50 px-3 py-2">
+                  <p className="text-doom-muted text-[11px] font-mono uppercase tracking-wider mb-1">
+                    Last round
+                  </p>
+                  <p className="text-xs text-white">
+                    Winners:{' '}
+                    <span className="text-neon-green">
+                      {latestRoundResult.winnerIds.map((id) => playerNameById[id] ?? 'Player').join(', ')}
+                    </span>
+                  </p>
+                  <p className="text-[11px] text-doom-muted">
+                    Pot {latestRoundResult.pot} • Your result{' '}
+                    <span className={Number(latestRoundResult.payouts[userId] ?? 0) >= 0 ? 'text-neon-green' : 'text-neon-pink'}>
+                      {Number(latestRoundResult.payouts[userId] ?? 0) >= 0 ? '+' : ''}{Math.floor(Number(latestRoundResult.payouts[userId] ?? 0))} coins
+                    </span>
+                  </p>
+                </div>
+              )}
+
               {isHost && room.selected_game_type && (
                 <button
                   onClick={() => {
@@ -1030,19 +1197,58 @@ export default function Battle({
                 </div>
               )}
 
+              {room.selected_game_type === 'scroll_sprint' && liveStandings.length > 0 && (
+                <div className="rounded-lg border border-doom-border bg-doom-bg/40 p-2 mt-3">
+                  <p className="text-doom-muted text-[11px] font-mono uppercase tracking-wider mb-1">
+                    Live standings
+                  </p>
+                  <div className="space-y-1">
+                    {liveStandings.map((entry, index) => {
+                      const player = rankedPlayers.find((item) => item.userId === entry.userId);
+                      if (!player) return null;
+                      const isMe = player.userId === userId;
+                      return (
+                        <div
+                          key={player.userId}
+                          className="flex items-center justify-between rounded border border-doom-border px-2 py-1 text-xs"
+                        >
+                          <span className={`${isMe ? 'text-neon-green' : 'text-white'}`}>
+                            #{index + 1} {player.displayName}{isMe ? ' (You)' : ''}
+                          </span>
+                          <span className="font-mono tabular-nums text-doom-muted">
+                            {formatMeters(entry.score)}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               {isRoundComplete && (
                 <div className="rounded-lg border border-neon-pink/40 bg-neon-pink/10 px-3 py-3">
                   <p className="text-neon-pink text-sm font-mono">Round complete.</p>
                   {isHost ? (
-                    <button
-                      onClick={() => {
-                        void handleBackToGameSelect();
-                      }}
-                      className="btn-primary w-full text-sm mt-2 disabled:opacity-60"
-                      disabled={working}
-                    >
-                      Back To Game Select
-                    </button>
+                    <div className="flex flex-col gap-2 mt-2">
+                      <button
+                        onClick={() => {
+                          void finalizeRound();
+                        }}
+                        className="btn-primary w-full text-sm disabled:opacity-60"
+                        disabled={working}
+                      >
+                        Finalize Round
+                      </button>
+                      <button
+                        onClick={() => {
+                          void handleBackToGameSelect();
+                        }}
+                        className="px-3 py-2 text-xs rounded-md border border-doom-border text-doom-muted hover:text-white hover:border-neon-green/35"
+                        disabled={working}
+                      >
+                        Back To Game Select
+                      </button>
+                    </div>
                   ) : (
                     <p className="text-[11px] text-doom-muted mt-1">Waiting for host to set the next round.</p>
                   )}
@@ -1051,6 +1257,66 @@ export default function Battle({
             </div>
           )}
         </>
+      )}
+
+      {resultOverlay && (
+        <div className="fixed inset-0 z-50 bg-black/65 backdrop-blur-[1px] flex items-center justify-center px-6">
+          <style>{`
+            @keyframes doomBattleConfettiFall {
+              0% { transform: translateY(-20vh) rotate(0deg); opacity: 1; }
+              100% { transform: translateY(120vh) rotate(360deg); opacity: 0.2; }
+            }
+          `}</style>
+
+          {overlayIsWinner && (
+            <div className="absolute inset-0 overflow-hidden pointer-events-none">
+              {Array.from({ length: 30 }).map((_, index) => {
+                const left = (index * 17) % 100;
+                const delay = (index % 7) * 0.18;
+                const duration = 1.8 + (index % 6) * 0.24;
+                const width = 6 + (index % 4) * 2;
+                const height = 10 + (index % 5) * 2;
+                const color = confettiColors[index % confettiColors.length];
+                return (
+                  <span
+                    key={`confetti-${index}`}
+                    className="absolute rounded-sm"
+                    style={{
+                      left: `${left}%`,
+                      top: '-12%',
+                      width: `${width}px`,
+                      height: `${height}px`,
+                      backgroundColor: color,
+                      animation: `doomBattleConfettiFall ${duration}s linear ${delay}s infinite`,
+                    }}
+                  />
+                );
+              })}
+            </div>
+          )}
+
+          <div className={`relative z-10 w-full max-w-sm rounded-2xl border px-5 py-6 text-center shadow-2xl ${
+            overlayIsWinner
+              ? 'border-neon-green/70 bg-neon-green/12'
+              : 'border-neon-pink/70 bg-neon-pink/12'
+          }`}>
+            <p className={`text-4xl font-mono font-bold ${overlayIsWinner ? 'neon-text-green' : 'neon-text-pink'}`}>
+              {overlayHeadline}
+            </p>
+            <p className={`mt-2 text-xl font-mono tabular-nums ${overlayIsWinner ? 'text-neon-green' : 'text-neon-pink'}`}>
+              {overlaySubline}
+            </p>
+            <p className="mt-2 text-[11px] text-doom-muted">
+              Pot {resultOverlay.pot} coins • Bet {resultOverlay.betCoins} coins
+            </p>
+            <button
+              className="mt-4 px-3 py-1.5 rounded-md border border-doom-border text-xs text-doom-muted hover:text-white hover:border-neon-green/40"
+              onClick={() => setResultOverlay(null)}
+            >
+              Close
+            </button>
+          </div>
+        </div>
       )}
 
       {info && (

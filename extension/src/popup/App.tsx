@@ -111,7 +111,10 @@ function App() {
     Number(currentProfile?.total_meters_scrolled ?? 0),
     Number(liveStats.totalMeters ?? 0),
   );
-  const headerCoins = metersToCoins(headerTotalMeters);
+  const profileCoinBalance = Number(currentProfile?.coin_balance);
+  const headerCoins = Number.isFinite(profileCoinBalance)
+    ? Math.max(0, Math.floor(profileCoinBalance))
+    : metersToCoins(headerTotalMeters);
   const profileReady = Boolean(currentProfile);
 
   // Authenticated but needs to set username
@@ -166,6 +169,7 @@ function App() {
             displayName={currentProfile?.display_name ?? currentUser.email?.split('@')[0] ?? 'User'}
             avatarUrl={currentProfile?.avatar_url ?? null}
             availableCoins={headerCoins}
+            onWalletSync={refreshProfile}
           />
         );
       case 'chat':

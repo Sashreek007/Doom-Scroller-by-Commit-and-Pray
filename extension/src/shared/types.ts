@@ -36,6 +36,8 @@ export interface Profile {
   avatar_url: string | null;
   is_public: boolean;
   total_meters_scrolled: number;
+  coin_balance: number;
+  coin_meter_checkpoint: number;
   created_at: string;
 }
 

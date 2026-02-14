@@ -326,6 +326,38 @@ export function useAuth() {
     }
   }, [resolveProfileRobust, state.user, writeCachedProfile]);
 
+  useEffect(() => {
+    const currentUserId = state.user?.id;
+    if (!currentUserId) return;
+
+    const channel = supabase
+      .channel(`profile-live-${currentUserId}`)
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'profiles', filter: `id=eq.${currentUserId}` },
+        ({ new: nextProfileRaw }) => {
+          const nextProfile = nextProfileRaw as Profile | null;
+          if (!nextProfile) return;
+
+          loadedProfileUserId.current = currentUserId;
+          void writeCachedProfile(nextProfile);
+          setState((prev) => {
+            if (prev.user?.id !== currentUserId) return prev;
+            return {
+              ...prev,
+              profile: nextProfile,
+              profileError: null,
+            };
+          });
+        },
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [state.user?.id, writeCachedProfile]);
+
   return {
     ...state,
     signUp,
