@@ -2,12 +2,14 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '@/shared/supabase';
 import type { User, Session } from '@supabase/supabase-js';
 import type { Profile } from '@/shared/types';
+import { ensureProfileExists, fetchProfile } from '@/shared/profile';
 
 interface AuthState {
   user: User | null;
   profile: Profile | null;
   session: Session | null;
   loading: boolean;
+  profileError: string | null;
 }
 
 export function useAuth() {
@@ -16,18 +18,10 @@ export function useAuth() {
     profile: null,
     session: null,
     loading: true,
+    profileError: null,
   });
   const loadedUserId = useRef<string | null>(null);
-
-  const fetchProfile = useCallback(async (userId: string): Promise<Profile | null> => {
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', userId)
-      .single();
-    if (error) console.warn('[DoomScroller] fetchProfile error:', error.message);
-    return data as Profile | null;
-  }, []);
+  const loadedProfileUserId = useRef<string | null>(null);
 
   const ensureProfilePublic = useCallback(async (profile: Profile | null): Promise<Profile | null> => {
     if (!profile || profile.is_public) return profile;
@@ -44,25 +38,51 @@ export function useAuth() {
     return data as Profile;
   }, []);
 
+  const resolveProfile = useCallback(async (user: User): Promise<Profile | null> => {
+    const profile = await ensureProfileExists(supabase, user);
+    const publicProfile = await ensureProfilePublic(profile).catch(() => profile);
+    return publicProfile;
+  }, [ensureProfilePublic]);
+
   useEffect(() => {
     let mounted = true;
 
     async function loadSession(session: Session | null) {
       if (!mounted) return;
       if (session?.user) {
-        if (loadedUserId.current === session.user.id) {
-          setState((prev) => ({ ...prev, session, loading: false }));
-          return;
+        const userId = session.user.id;
+        const userChanged = loadedUserId.current !== userId;
+
+        loadedUserId.current = userId;
+        if (userChanged) loadedProfileUserId.current = null;
+
+        setState((prev) => ({
+          ...prev,
+          user: session.user,
+          session,
+          loading: false,
+          profile: userChanged ? null : prev.profile,
+          profileError: null,
+        }));
+
+        if (loadedProfileUserId.current === userId) return;
+
+        const profile = await resolveProfile(session.user).catch(() => null);
+        if (!mounted) return;
+        if (profile) {
+          loadedProfileUserId.current = userId;
+          setState((prev) => ({ ...prev, profile, profileError: null }));
+        } else {
+          setState((prev) => ({
+            ...prev,
+            profile: null,
+            profileError: 'Could not load your profile from the database.',
+          }));
         }
-        // Show UI immediately with user, fetch profile in background
-        loadedUserId.current = session.user.id;
-        setState((prev) => ({ ...prev, user: session.user, session, loading: false }));
-        const profile = await fetchProfile(session.user.id).catch(() => null);
-        const publicProfile = await ensureProfilePublic(profile).catch(() => profile);
-        if (mounted) setState((prev) => ({ ...prev, profile: publicProfile }));
       } else {
         loadedUserId.current = null;
-        setState({ user: null, profile: null, session: null, loading: false });
+        loadedProfileUserId.current = null;
+        setState({ user: null, profile: null, session: null, loading: false, profileError: null });
       }
     }
 
@@ -87,7 +107,7 @@ export function useAuth() {
       clearTimeout(timeout);
       subscription.unsubscribe();
     };
-  }, [ensureProfilePublic, fetchProfile]);
+  }, [resolveProfile]);
 
   const signUp = async (email: string, password: string, displayName: string) => {
     const { data, error } = await supabase.auth.signUp({
@@ -107,18 +127,31 @@ export function useAuth() {
       password,
     });
     if (error) throw error;
-    // Immediately update state so UI transitions without waiting for onAuthStateChange
+
+    // Immediately update state so UI transitions without waiting for onAuthStateChange.
     if (data.session?.user) {
-      loadedUserId.current = data.session.user.id;
-      setState({ user: data.session.user, profile: null, session: data.session, loading: false });
-      // Fetch profile in background
-      fetchProfile(data.session.user.id).then((profile) => {
-        ensureProfilePublic(profile).then((publicProfile) => {
-          setState((prev) => ({ ...prev, profile: publicProfile }));
-        }).catch(() => {
-          setState((prev) => ({ ...prev, profile }));
-        });
-      }).catch(() => {});
+      const user = data.session.user;
+      loadedUserId.current = user.id;
+      loadedProfileUserId.current = null;
+      setState({ user, profile: null, session: data.session, loading: false, profileError: null });
+
+      resolveProfile(user).then((profile) => {
+        if (profile) {
+          loadedProfileUserId.current = user.id;
+          setState((prev) => ({ ...prev, profile, profileError: null }));
+        } else {
+          setState((prev) => ({
+            ...prev,
+            profile: null,
+            profileError: 'Could not load your profile from the database.',
+          }));
+        }
+      }).catch(() => {
+        setState((prev) => ({
+          ...prev,
+          profileError: 'Could not load your profile from the database.',
+        }));
+      });
     }
     return data;
   };
@@ -126,6 +159,9 @@ export function useAuth() {
   const signOut = async () => {
     const { error } = await supabase.auth.signOut();
     if (error) throw error;
+    loadedUserId.current = null;
+    loadedProfileUserId.current = null;
+    setState({ user: null, profile: null, session: null, loading: false, profileError: null });
   };
 
   const updateUsername = async (username: string) => {
@@ -135,10 +171,33 @@ export function useAuth() {
       .update({ username: username.toLowerCase() })
       .eq('id', state.user.id);
     if (error) throw error;
-    loadedUserId.current = null;
-    const profile = await fetchProfile(state.user.id);
-    setState((prev) => ({ ...prev, profile }));
+    loadedProfileUserId.current = null;
+    const profile = await fetchProfile(supabase, state.user.id);
+    if (profile) loadedProfileUserId.current = state.user.id;
+    setState((prev) => ({
+      ...prev,
+      profile,
+      profileError: profile ? null : 'Could not refresh your profile.',
+    }));
   };
+
+  const refreshProfile = useCallback(async () => {
+    if (!state.user) return;
+    const user = state.user;
+    loadedProfileUserId.current = null;
+    setState((prev) => ({ ...prev, profileError: null }));
+    const profile = await resolveProfile(user).catch(() => null);
+    if (profile) {
+      loadedProfileUserId.current = user.id;
+      setState((prev) => ({ ...prev, profile, profileError: null }));
+    } else {
+      setState((prev) => ({
+        ...prev,
+        profile: null,
+        profileError: 'Could not load your profile from the database.',
+      }));
+    }
+  }, [resolveProfile, state.user]);
 
   return {
     ...state,
@@ -146,5 +205,6 @@ export function useAuth() {
     signIn,
     signOut,
     updateUsername,
+    refreshProfile,
   };
 }

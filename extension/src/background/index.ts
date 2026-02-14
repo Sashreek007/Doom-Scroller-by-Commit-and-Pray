@@ -2,7 +2,7 @@
 // Central coordinator: message routing, scroll aggregation, Supabase sync
 
 import { loadBatches } from './scroll-aggregator';
-import { setupAlarms, handleAlarm } from './alarm-handlers';
+import { setupAlarms, handleAlarm, syncToSupabaseNow } from './alarm-handlers';
 import { handleMessage } from './message-router';
 
 console.log('[DoomScroller] Background service worker loaded');
@@ -18,6 +18,9 @@ chrome.runtime.onInstalled.addListener(() => {
 
 // Also set up alarms on SW startup (alarms persist but good to ensure)
 setupAlarms();
+
+// Attempt immediate sync on startup so persisted batches are uploaded quickly.
+void syncToSupabaseNow();
 
 // Route messages from content scripts and popup
 chrome.runtime.onMessage.addListener(handleMessage);

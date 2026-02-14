@@ -4,6 +4,7 @@ import { addScrollData, getBatches } from './scroll-aggregator';
 import type { ExtensionMessage, GetStatsResponse } from '../shared/messages';
 import { getSupabase } from './supabase-client';
 import { toCanonicalSite } from '../shared/constants';
+import { triggerOpportunisticSync } from './alarm-handlers';
 
 const TOTAL_CACHE_TTL_MS = 60000;
 const totalMetersCache = new Map<string, { value: number; updatedAt: number }>();
@@ -28,6 +29,7 @@ export function handleMessage(
         return false;
       }
       addScrollData(canonicalSite, pixels, meters);
+      triggerOpportunisticSync();
       sendResponse({ ok: true });
       return false; // synchronous response
     }
