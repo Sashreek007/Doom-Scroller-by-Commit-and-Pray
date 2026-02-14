@@ -314,4 +314,4 @@ Safety/control approach:
 
 ## 📜 License
 
-[ADD_LICENSE_HERE]
+MIT License. See `LICENSE`.
