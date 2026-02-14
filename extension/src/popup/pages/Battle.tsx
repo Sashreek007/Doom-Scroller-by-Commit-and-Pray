@@ -6,7 +6,7 @@ import UserAvatar from '../components/UserAvatar';
 type BattleRoomStatus = 'lobby' | 'game_select' | 'active' | 'closed';
 type BattleMemberStatus = 'joined' | 'left' | 'kicked';
 type BattleMemberRole = 'host' | 'player';
-type GameTypeKey = 'scroll_sprint' | 'target_chase' | 'app_lockdown';
+type GameTypeKey = 'scroll_sprint' | 'target_chase';
 
 interface BattleProps {
   userId: string;
@@ -85,6 +85,7 @@ const DB_REFRESH_DEBOUNCE_MS = 120;
 const ROOM_POLL_INTERVAL_MS = 1200;
 const PRESTART_SECONDS = 8;
 const RESULT_SEEN_STORAGE_PREFIX = 'battle_result_seen_';
+const SHOW_POPUP_ROUND_VISUALS = false;
 
 const GAME_OPTIONS: BattleGameOption[] = [
   {
@@ -99,12 +100,6 @@ const GAME_OPTIONS: BattleGameOption[] = [
     subtitle: 'Precision mode',
     details: 'Closest to the target distance wins.',
   },
-  {
-    id: 'app_lockdown',
-    title: 'App Lockdown',
-    subtitle: 'Single-app challenge',
-    details: 'Only one selected app counts.',
-  },
 ];
 
 const GAME_RULES: Record<GameTypeKey, string[]> = {
@@ -117,11 +112,6 @@ const GAME_RULES: Record<GameTypeKey, string[]> = {
     'Try to finish closest to the target distance.',
     'Overshoot and undershoot both count.',
     'Closest distance wins.',
-  ],
-  app_lockdown: [
-    'Only the selected app contributes distance.',
-    'Cross-app scrolling does not score.',
-    'Highest valid distance wins.',
   ],
 };
 
@@ -567,11 +557,15 @@ export default function Battle({
 
       if (cancelled) return;
       shownResultKeyRef.current = resultKey;
-      setResultOverlay(latestRoundResult);
       void onWalletSync?.();
-      timeout = window.setTimeout(() => {
+      if (SHOW_POPUP_ROUND_VISUALS) {
+        setResultOverlay(latestRoundResult);
+        timeout = window.setTimeout(() => {
+          setResultOverlay(null);
+        }, 5200);
+      } else {
         setResultOverlay(null);
-      }, 5200);
+      }
 
       try {
         await chrome.storage.local.set({ [seenStorageKey]: resultKey });
@@ -1260,7 +1254,15 @@ export default function Battle({
                 </div>
               )}
 
-              {isPrestartPhase && (
+              {!SHOW_POPUP_ROUND_VISUALS && (isPrestartPhase || isRoundLive) && (
+                <div className="rounded-lg border border-doom-border bg-doom-bg/50 px-3 py-2 text-center mb-3">
+                  <p className="text-[11px] text-doom-muted">
+                    Round countdown is shown on the main page overlay.
+                  </p>
+                </div>
+              )}
+
+              {SHOW_POPUP_ROUND_VISUALS && isPrestartPhase && (
                 <div className="rounded-lg border border-neon-cyan/45 bg-neon-cyan/10 px-3 py-3 text-center">
                   <p className="text-neon-cyan text-[11px] font-mono uppercase tracking-wider">Starting in</p>
                   <p className="text-3xl font-mono font-bold text-neon-cyan mt-1">
@@ -1270,7 +1272,7 @@ export default function Battle({
                 </div>
               )}
 
-              {isRoundLive && (
+              {SHOW_POPUP_ROUND_VISUALS && isRoundLive && (
                 <div className="rounded-lg border border-neon-green/45 bg-neon-green/10 px-3 py-3 text-center">
                   <p className="text-neon-green text-[11px] font-mono uppercase tracking-wider">Time left</p>
                   <p className="text-4xl font-mono font-bold neon-text-green mt-1">
@@ -1359,7 +1361,7 @@ export default function Battle({
         </>
       )}
 
-      {resultOverlay && (
+      {SHOW_POPUP_ROUND_VISUALS && resultOverlay && (
         <div className="fixed inset-0 z-50 bg-black/65 backdrop-blur-[1px] flex items-center justify-center px-6">
           <style>{`
             @keyframes doomBattleConfettiFall {

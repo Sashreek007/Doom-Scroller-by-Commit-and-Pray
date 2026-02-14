@@ -67,7 +67,6 @@ if (!config) {
   function getBattleGameLabel(gameType: string | null): string {
     if (gameType === 'scroll_sprint') return 'Scroll Sprint';
     if (gameType === 'target_chase') return 'Target Chase';
-    if (gameType === 'app_lockdown') return 'App Lockdown';
     return 'Battle';
   }
 
