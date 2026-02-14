@@ -53,6 +53,8 @@ export interface Friendship {
 
 // ============ Achievements ============
 
+export type AchievementRarity = 'common' | 'rare' | 'epic' | 'legendary';
+
 export interface Achievement {
   id: string;
   user_id: string;
@@ -62,6 +64,11 @@ export interface Achievement {
   description: string;
   icon: string;
   earned_at: string;
+  event_key?: string | null;
+  rarity?: AchievementRarity | null;
+  app_scope?: string | null;
+  meta?: Record<string, unknown> | null;
+  source?: string | null;
 }
 
 // ============ Battles (v3) ============

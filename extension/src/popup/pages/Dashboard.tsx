@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useScrollStats } from '../hooks/useScrollStats';
 import SiteCard from '../components/SiteCard';
+import type { GetStatsResponse } from '@/shared/messages';
 
 const FUN_COMPARISONS = [
   (m: number) => `That's ${(m / 91.44).toFixed(1)} football fields`,
@@ -11,8 +12,15 @@ const FUN_COMPARISONS = [
   (m: number) => `That's ${(m / 1.7).toFixed(0)} you's stacked up`,
 ];
 
-export default function Dashboard() {
-  const { stats, loading } = useScrollStats();
+interface DashboardProps {
+  stats?: GetStatsResponse;
+  loading?: boolean;
+}
+
+export default function Dashboard({ stats: externalStats, loading: externalLoading }: DashboardProps) {
+  const { stats: hookStats, loading: hookLoading } = useScrollStats();
+  const stats = externalStats ?? hookStats;
+  const loading = externalLoading ?? hookLoading;
 
   const comparison = useMemo(() => {
     if (stats.todayMeters === 0) return "You haven't scrolled today. Suspicious.";

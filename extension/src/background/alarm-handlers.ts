@@ -5,6 +5,7 @@ import { getSupabase } from './supabase-client';
 import { SYNC_INTERVAL_MINUTES } from '../shared/constants';
 import { ensureProfileExists } from '../shared/profile';
 import { applySyncedBatchesToDbCache } from './stats-cache';
+import { processAchievementQueueNow, triggerAchievementQueueProcessing } from './achievement-queue';
 
 const SYNC_ALARM_NAME = 'sync-scroll';
 const OPPORTUNISTIC_SYNC_INTERVAL_MS = 5000;
@@ -21,11 +22,13 @@ export function setupAlarms() {
 export function handleAlarm(alarm: chrome.alarms.Alarm) {
   if (alarm.name === SYNC_ALARM_NAME) {
     void syncToSupabaseNow();
+    void processAchievementQueueNow();
   }
 }
 
 export function triggerOpportunisticSync() {
   const now = Date.now();
+  triggerAchievementQueueProcessing();
   if (syncInFlight) return;
   if (now - lastOpportunisticSyncAt < OPPORTUNISTIC_SYNC_INTERVAL_MS) return;
   lastOpportunisticSyncAt = now;
@@ -89,5 +92,6 @@ export async function syncToSupabaseNow() {
     }
   } finally {
     syncInFlight = false;
+    triggerAchievementQueueProcessing();
   }
 }

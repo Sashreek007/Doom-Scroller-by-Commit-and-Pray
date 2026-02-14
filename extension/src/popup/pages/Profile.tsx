@@ -1,11 +1,47 @@
 import { useState, useEffect, useRef, useCallback, type ChangeEvent } from 'react';
 import { supabase } from '@/shared/supabase';
-import type { Profile as ProfileType, Achievement } from '@/shared/types';
+import type { Profile as ProfileType, Achievement, AchievementRarity } from '@/shared/types';
 import { prepareAvatarUploadDataUrl } from '@/shared/avatar';
 import { writeProfileToCache } from '@/shared/profile-cache';
+import { metersToCoins } from '@/shared/coins';
+import type { AchievementSyncedMessage } from '@/shared/messages';
+import GoldCoinIcon from '../components/GoldCoinIcon';
 
 const CACHE_KEY_PROFILE = 'cached_profile_';
 const CACHE_KEY_ACHIEVEMENTS = 'cached_achievements_';
+
+function getAchievementRarity(rarity: Achievement['rarity']): AchievementRarity {
+  if (rarity === 'rare' || rarity === 'epic' || rarity === 'legendary') return rarity;
+  return 'common';
+}
+
+function getRarityClasses(rarity: AchievementRarity): string {
+  if (rarity === 'legendary') {
+    return 'border-fuchsia-400/60 bg-fuchsia-500/10 shadow-[0_0_18px_rgba(192,38,211,0.28)]';
+  }
+  if (rarity === 'epic') {
+    return 'border-cyan-400/60 bg-cyan-500/10 shadow-[0_0_16px_rgba(6,182,212,0.26)]';
+  }
+  if (rarity === 'rare') {
+    return 'border-neon-green/50 bg-neon-green/10 shadow-[0_0_14px_rgba(57,255,20,0.24)]';
+  }
+  return 'border-doom-border bg-doom-surface';
+}
+
+function getRoastLine(meta: Achievement['meta']): string | null {
+  if (!meta || typeof meta !== 'object') return null;
+  const value = (meta as Record<string, unknown>).roast_line;
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function isAchievementSyncedMessage(value: unknown): value is AchievementSyncedMessage {
+  if (!value || typeof value !== 'object') return false;
+  const message = value as { type?: unknown; payload?: unknown };
+  if (message.type !== 'ACHIEVEMENT_SYNCED') return false;
+  if (!message.payload || typeof message.payload !== 'object') return false;
+  const payload = message.payload as { userId?: unknown; eventKey?: unknown };
+  return typeof payload.userId === 'string' && typeof payload.eventKey === 'string';
+}
 
 interface ProfileProps {
   userId: string;
@@ -13,6 +49,7 @@ interface ProfileProps {
   onBack?: () => void;
   cachedProfile?: ProfileType | null;
   onProfileUpdated?: () => void | Promise<void>;
+  liveTotalMeters?: number;
 }
 
 export default function Profile({
@@ -21,6 +58,7 @@ export default function Profile({
   onBack,
   cachedProfile,
   onProfileUpdated,
+  liveTotalMeters,
 }: ProfileProps) {
   const [profile, setProfile] = useState<ProfileType | null>(cachedProfile ?? null);
   const [achievements, setAchievements] = useState<Achievement[]>([]);
@@ -31,6 +69,19 @@ export default function Profile({
   const [avatarBroken, setAvatarBroken] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const avatarMessageTimerRef = useRef<number | null>(null);
+
+  const refreshAchievements = useCallback(async () => {
+    const { data } = await supabase
+      .from('achievements')
+      .select('*')
+      .eq('user_id', userId)
+      .order('earned_at', { ascending: false });
+
+    if (!data) return;
+
+    setAchievements(data as Achievement[]);
+    await chrome.storage.local.set({ [CACHE_KEY_ACHIEVEMENTS + userId]: data });
+  }, [userId]);
 
   const syncProfileCaches = useCallback(async (nextProfile: ProfileType) => {
     try {
@@ -88,6 +139,21 @@ export default function Profile({
   useEffect(() => {
     setAvatarBroken(false);
   }, [profile?.avatar_url]);
+
+  useEffect(() => {
+    if (!isOwnProfile) return;
+
+    const listener: Parameters<typeof chrome.runtime.onMessage.addListener>[0] = (message) => {
+      if (!isAchievementSyncedMessage(message)) return;
+      if (message.payload.userId !== userId) return;
+      void refreshAchievements();
+    };
+
+    chrome.runtime.onMessage.addListener(listener);
+    return () => {
+      chrome.runtime.onMessage.removeListener(listener);
+    };
+  }, [isOwnProfile, refreshAchievements, userId]);
 
   useEffect(() => () => {
     if (avatarMessageTimerRef.current !== null) {
@@ -213,6 +279,12 @@ export default function Profile({
     month: 'short',
     year: 'numeric',
   });
+  const totalMetersForDisplay = (
+    isOwnProfile && typeof liveTotalMeters === 'number'
+      ? Math.max(Number(profile.total_meters_scrolled ?? 0), liveTotalMeters)
+      : Number(profile.total_meters_scrolled ?? 0)
+  );
+  const coins = metersToCoins(totalMetersForDisplay);
 
   return (
     <div className="flex flex-col gap-4">
@@ -226,6 +298,12 @@ export default function Profile({
       )}
 
       <div className="text-center py-2">
+        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-yellow-500/10 border border-yellow-400/40 mb-2 shadow-[0_0_10px_rgba(250,204,21,0.18)]">
+          <GoldCoinIcon className="w-4 h-4" />
+          <span className="text-yellow-100 text-sm font-semibold font-mono tabular-nums">
+            {coins}
+          </span>
+        </div>
         {isOwnProfile ? (
           <div className="w-16 h-16 rounded-full bg-doom-surface border-2 border-neon-green/30 mx-auto mb-3 overflow-hidden flex items-center justify-center">
             {profile.avatar_url && !avatarBroken ? (
@@ -300,9 +378,9 @@ export default function Profile({
         <div className="card text-center">
           <p className="text-doom-muted text-[10px] font-mono uppercase">Total Scrolled</p>
           <p className="text-lg font-bold font-mono neon-text-green">
-            {profile.total_meters_scrolled < 1000
-              ? `${Math.round(profile.total_meters_scrolled)}m`
-              : `${(profile.total_meters_scrolled / 1000).toFixed(2)}km`}
+            {totalMetersForDisplay < 1000
+              ? `${Math.round(totalMetersForDisplay)}m`
+              : `${(totalMetersForDisplay / 1000).toFixed(2)}km`}
           </p>
         </div>
         <div className="card text-center">
@@ -320,12 +398,15 @@ export default function Profile({
             {achievements.map((a) => (
               <div
                 key={a.id}
-                className="card flex flex-col items-center gap-1 p-2"
-                title={`${a.title}: ${a.description}`}
+                className={`card flex flex-col items-center gap-1 p-2 ${getRarityClasses(getAchievementRarity(a.rarity))}`}
+                title={`${a.title}: ${a.description}${getRoastLine(a.meta) ? ` — ${getRoastLine(a.meta)}` : ''}`}
               >
                 <span className="text-xl">{a.icon}</span>
                 <span className="text-[9px] text-doom-muted font-mono text-center leading-tight truncate w-full">
                   {a.title}
+                </span>
+                <span className="text-[8px] uppercase tracking-wider text-doom-muted/80 font-mono">
+                  {getAchievementRarity(a.rarity)}
                 </span>
               </div>
             ))}

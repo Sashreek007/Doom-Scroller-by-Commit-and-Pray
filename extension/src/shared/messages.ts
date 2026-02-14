@@ -34,6 +34,40 @@ export interface GetStatsResponse {
   totalMeters: number;
 }
 
+export interface AchievementToastPayload {
+  eventKey: string;
+  title: string;
+  description: string;
+  icon: string;
+  rarity: 'common' | 'rare' | 'epic' | 'legendary';
+  roastLine: string;
+  appScope?: string | null;
+}
+
+export interface AchievementToastMessage {
+  type: 'ACHIEVEMENT_TOAST';
+  payload: AchievementToastPayload;
+}
+
+export interface AchievementSyncedMessage {
+  type: 'ACHIEVEMENT_SYNCED';
+  payload: {
+    userId: string;
+    eventKey: string;
+    achievementId?: string;
+  };
+}
+
+export interface ChatbotResponse {
+  reply: string;
+  context?: {
+    rank?: number | null;
+    percentile?: number | null;
+    topSite?: string | null;
+    recentMeters?: number;
+  };
+}
+
 export type ExtensionMessage =
   | ScrollUpdateMessage
   | BattleScrollMessage

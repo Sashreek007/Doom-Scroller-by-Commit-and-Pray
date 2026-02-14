@@ -11,13 +11,23 @@ import {
   getDayStartIso,
   setDbStatsFromServer,
 } from './stats-cache';
+import { getBackgroundFeatureFlags } from './feature-flags';
+import { processScrollForAchievements } from './achievement-engine';
+import { enqueueAchievementJob, triggerAchievementQueueProcessing } from './achievement-queue';
 
 const DB_STATS_REFRESH_INTERVAL_MS = 5000;
 const INITIAL_DB_REFRESH_WAIT_MS = 250;
+
 const dbRefreshInFlight = new Map<string, Promise<void>>();
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function getActiveUserId(): Promise<string | null> {
+  const supabase = getSupabase();
+  const { data: { session } } = await supabase.auth.getSession();
+  return session?.user?.id ?? null;
 }
 
 function buildTodayFromSessions(
@@ -78,14 +88,52 @@ function requestDbRefresh(userId: string, dayKey: string, dayStartIso: string): 
   return promise;
 }
 
+async function processScrollAchievements(
+  site: string,
+  meters: number,
+  timestamp: number,
+  tabId?: number,
+): Promise<void> {
+  const userId = await getActiveUserId();
+  if (!userId) return;
+
+  const flags = getBackgroundFeatureFlags();
+  const unlocks = await processScrollForAchievements(
+    {
+      userId,
+      site,
+      meters,
+      timestamp,
+    },
+    flags,
+  );
+
+  if (unlocks.length === 0) return;
+
+  for (const unlock of unlocks) {
+    if (flags.achievementToast && typeof tabId === 'number') {
+      void chrome.tabs.sendMessage(tabId, {
+        type: 'ACHIEVEMENT_TOAST',
+        payload: unlock.toast,
+      }).catch(() => {
+        // Tab may no longer have content script attached.
+      });
+    }
+
+    await enqueueAchievementJob(unlock);
+  }
+
+  triggerAchievementQueueProcessing();
+}
+
 export function handleMessage(
   message: ExtensionMessage,
-  _sender: chrome.runtime.MessageSender,
+  sender: chrome.runtime.MessageSender,
   sendResponse: (response: unknown) => void,
 ): boolean {
   switch (message.type) {
     case 'SCROLL_UPDATE': {
-      const { site, pixels, meters } = message.payload;
+      const { site, pixels, meters, timestamp } = message.payload;
       const canonicalSite = toCanonicalSite(site);
       if (
         !canonicalSite
@@ -97,8 +145,11 @@ export function handleMessage(
         sendResponse({ ok: false });
         return false;
       }
+
       addScrollData(canonicalSite, pixels, meters);
       triggerOpportunisticSync();
+      void processScrollAchievements(canonicalSite, meters, timestamp, sender.tab?.id);
+
       sendResponse({ ok: true });
       return false; // synchronous response
     }

@@ -8,8 +8,12 @@ import Profile from './pages/Profile';
 import Friends from './pages/Friends';
 import Leaderboard from './pages/Leaderboard';
 import Settings from './pages/Settings';
+import Chat from './pages/Chat';
 import BottomNav from './components/BottomNav';
 import { usePendingFriendRequestsCount } from './hooks/usePendingFriendRequestsCount';
+import { metersToCoins } from '@/shared/coins';
+import GoldCoinIcon from './components/GoldCoinIcon';
+import { useScrollStats } from './hooks/useScrollStats';
 
 function getProfileInitials(displayName: string | null | undefined, username: string): string {
   const source = (displayName?.trim() || username).replace(/^@+/, '').trim();
@@ -46,6 +50,7 @@ function App() {
   const { count: pendingRequestsCount, refresh: refreshPendingRequests } = usePendingFriendRequestsCount(user?.id ?? null);
   const [pendingRequestsLocal, setPendingRequestsLocal] = useState(0);
   const [headerAvatarBroken, setHeaderAvatarBroken] = useState(false);
+  const { stats: liveStats, loading: liveStatsLoading } = useScrollStats();
 
   useEffect(() => {
     setPendingRequestsLocal(pendingRequestsCount);
@@ -101,6 +106,11 @@ function App() {
   const fallbackUsername = currentUser.email?.split('@')[0]?.toLowerCase().replace(/[^a-z0-9_]/g, '_') || 'user';
   const headerUsername = currentProfile?.username ?? fallbackUsername;
   const headerInitials = getProfileInitials(currentProfile?.display_name, headerUsername);
+  const headerTotalMeters = Math.max(
+    Number(currentProfile?.total_meters_scrolled ?? 0),
+    Number(liveStats.totalMeters ?? 0),
+  );
+  const headerCoins = metersToCoins(headerTotalMeters);
   const profileReady = Boolean(currentProfile);
 
   // Authenticated but needs to set username
@@ -122,7 +132,7 @@ function App() {
   function renderPage() {
     switch (activePage) {
       case 'home':
-        return <Dashboard />;
+        return <Dashboard stats={liveStats} loading={liveStatsLoading} />;
       case 'board':
         return (
           <Leaderboard
@@ -150,7 +160,7 @@ function App() {
       case 'battle':
         return <div className="text-center text-doom-muted py-8 font-mono text-sm">Battles coming in v3...</div>;
       case 'chat':
-        return <div className="text-center text-doom-muted py-8 font-mono text-sm">AI Chat coming in v2...</div>;
+        return <Chat userId={currentUser.id} />;
       case 'profile':
         return (
           <Profile
@@ -159,6 +169,7 @@ function App() {
             onBack={viewingProfileId ? () => setActivePage('home') : undefined}
             cachedProfile={(!viewingProfileId || viewingProfileId === currentUser.id) ? currentProfile ?? undefined : undefined}
             onProfileUpdated={!viewingProfileId || viewingProfileId === currentUser.id ? refreshProfile : undefined}
+            liveTotalMeters={!viewingProfileId || viewingProfileId === currentUser.id ? liveStats.totalMeters : undefined}
           />
         );
       case 'settings':
@@ -211,6 +222,15 @@ function App() {
           DoomScroller
         </h1>
         <div className="flex items-center gap-2">
+          <div
+            className="inline-flex items-center gap-1.5 px-2.5 h-9 rounded-full bg-yellow-500/10 border border-yellow-400/40 shadow-[0_0_10px_rgba(250,204,21,0.18)]"
+            title={`Coins: ${headerCoins}`}
+          >
+            <GoldCoinIcon className="w-4 h-4" />
+            <span className="text-yellow-100 text-sm font-semibold font-mono tabular-nums">
+              {headerCoins}
+            </span>
+          </div>
           <button
             onClick={() => {
               setViewingProfileId(null);
