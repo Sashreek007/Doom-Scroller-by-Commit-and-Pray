@@ -38,7 +38,7 @@
   "content_scripts": [
     {
       "js": [
-        "assets/tracker.ts-loader-DVSS5y0I.js"
+        "assets/tracker.ts-loader-YX87FQig.js"
       ],
       "matches": [
         "https://facebook.com/*",
@@ -105,7 +105,7 @@
       "resources": [
         "assets/constants-BqRKAH88.js",
         "assets/coins-CEGumQio.js",
-        "assets/tracker.ts-BPjwYfQB.js"
+        "assets/tracker.ts-sU2FgUhN.js"
       ],
       "use_dynamic_url": false
     }

@@ -2,6 +2,7 @@
 
 import { addScrollData, getBatches } from './scroll-aggregator';
 import type {
+  BattleRoundResultSummary,
   ExtensionMessage,
   GetBattleTimerResponse,
   GetStatsResponse,
@@ -36,6 +37,45 @@ async function getActiveUserId(): Promise<string | null> {
   return session?.user?.id ?? null;
 }
 
+function parseBattleRoundResultSummary(
+  row: {
+    id: unknown;
+    room_key: unknown;
+    selected_game_type: unknown;
+    round_result: unknown;
+  },
+): BattleRoundResultSummary | null {
+  if (!row.round_result || typeof row.round_result !== 'object') return null;
+  const value = row.round_result as Record<string, unknown>;
+  const settledAt = typeof value.settledAt === 'string' ? value.settledAt : null;
+  const pot = Number(value.pot);
+  const betCoins = Number(value.betCoins);
+  if (!settledAt || !Number.isFinite(pot) || !Number.isFinite(betCoins)) return null;
+
+  const winnerIds = Array.isArray(value.winnerIds)
+    ? value.winnerIds.filter((entry): entry is string => typeof entry === 'string')
+    : [];
+
+  const payouts: Record<string, number> = {};
+  if (value.payouts && typeof value.payouts === 'object') {
+    for (const [key, raw] of Object.entries(value.payouts as Record<string, unknown>)) {
+      const numeric = Number(raw);
+      if (Number.isFinite(numeric)) payouts[key] = numeric;
+    }
+  }
+
+  return {
+    roomId: typeof row.id === 'string' ? row.id : '',
+    roomKey: typeof row.room_key === 'string' ? row.room_key : '',
+    gameType: typeof row.selected_game_type === 'string' ? row.selected_game_type : null,
+    settledAt,
+    winnerIds,
+    payouts,
+    pot: Math.max(0, Math.floor(pot)),
+    betCoins: Math.max(0, Math.floor(betCoins)),
+  };
+}
+
 async function fetchBattleTimerFromDb(userId: string): Promise<GetBattleTimerResponse> {
   const supabase = getSupabase();
   const { data: memberships, error: membershipError } = await supabase
@@ -46,19 +86,28 @@ async function fetchBattleTimerFromDb(userId: string): Promise<GetBattleTimerRes
     .order('joined_at', { ascending: false })
     .limit(12);
 
-  if (membershipError) return { active: false };
+  if (membershipError) return { active: false, viewerUserId: userId };
   const roomIds = (memberships ?? [])
     .map((row) => row.room_id as string | null)
     .filter((value): value is string => Boolean(value));
-  if (roomIds.length === 0) return { active: false };
+  if (roomIds.length === 0) return { active: false, viewerUserId: userId };
 
   const { data: rooms, error: roomError } = await supabase
     .from('battle_rooms')
-    .select('id, room_key, status, selected_game_type, round_started_at, round_ends_at, timer_seconds')
+    .select('id, room_key, status, selected_game_type, round_started_at, round_ends_at, timer_seconds, round_result, updated_at')
     .in('id', roomIds)
-    .order('round_ends_at', { ascending: false, nullsFirst: false });
+    .order('updated_at', { ascending: false });
 
-  if (roomError || !rooms || rooms.length === 0) return { active: false };
+  if (roomError || !rooms || rooms.length === 0) return { active: false, viewerUserId: userId };
+
+  let latestRoundResult: BattleRoundResultSummary | null = null;
+  for (const room of rooms) {
+    const parsed = parseBattleRoundResultSummary(room);
+    if (parsed) {
+      latestRoundResult = parsed;
+      break;
+    }
+  }
 
   const nowMs = Date.now();
   const activeRoom = rooms.find((room) => {
@@ -66,16 +115,24 @@ async function fetchBattleTimerFromDb(userId: string): Promise<GetBattleTimerRes
     const endMs = Date.parse(room.round_ends_at as string);
     return Number.isFinite(endMs) && endMs > nowMs;
   });
-  if (!activeRoom) return { active: false };
+  if (!activeRoom) {
+    return {
+      active: false,
+      viewerUserId: userId,
+      latestRoundResult,
+    };
+  }
 
   return {
     active: true,
+    viewerUserId: userId,
     roomId: activeRoom.id as string,
     roomKey: activeRoom.room_key as string,
     gameType: (activeRoom.selected_game_type as string | null) ?? null,
     roundStartedAt: activeRoom.round_started_at as string,
     roundEndsAt: activeRoom.round_ends_at as string,
     timerSeconds: Number(activeRoom.timer_seconds ?? 0),
+    latestRoundResult,
   };
 }
 

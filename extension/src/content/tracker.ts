@@ -7,6 +7,7 @@ import { METERS_PER_PIXEL, CONTENT_FLUSH_INTERVAL_MS } from '../shared/constants
 import { metersToCoins } from '../shared/coins';
 import type {
   AchievementToastPayload,
+  BattleRoundResultSummary,
   GetBattleTimerResponse,
   GetStatsResponse,
   ScrollUpdateMessage,
@@ -21,6 +22,7 @@ const COIN_TOAST_VISIBLE_MS = 1300;
 const ACHIEVEMENT_TOAST_VISIBLE_MS = 2600;
 const BATTLE_TIMER_SYNC_INTERVAL_MS = 2000;
 const BATTLE_TIMER_TICK_INTERVAL_MS = 250;
+const BATTLE_RESULT_OVERLAY_MS = 5200;
 
 const config = getSiteConfig();
 if (!config) {
@@ -48,6 +50,9 @@ if (!config) {
     roundStartMs: number;
     roundEndMs: number;
   } | null = null;
+  let battleResultOverlayHost: HTMLDivElement | null = null;
+  let battleResultHideTimer: number | null = null;
+  let shownBattleResultKey: string | null = null;
 
   const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -223,8 +228,159 @@ if (!config) {
         type: 'GET_BATTLE_TIMER',
       }) as GetBattleTimerResponse | undefined;
       applyBattleTimerResponse(response);
+      void maybeShowBattleResultOverlay(response);
     } catch {
       // Keep existing timer state on transient background/network errors.
+    }
+  }
+
+  function ensureBattleResultStyleTag() {
+    if (document.getElementById('doomscroller-battle-result-style')) return;
+    const style = document.createElement('style');
+    style.id = 'doomscroller-battle-result-style';
+    style.textContent = `
+      @keyframes doomBattlePageConfettiFall {
+        0% { transform: translateY(-18vh) rotate(0deg); opacity: 1; }
+        100% { transform: translateY(110vh) rotate(420deg); opacity: 0.15; }
+      }
+    `;
+    (document.head ?? document.documentElement).appendChild(style);
+  }
+
+  function clearBattleResultOverlay() {
+    if (battleResultHideTimer !== null) {
+      window.clearTimeout(battleResultHideTimer);
+      battleResultHideTimer = null;
+    }
+    if (battleResultOverlayHost) {
+      battleResultOverlayHost.remove();
+      battleResultOverlayHost = null;
+    }
+  }
+
+  function showBattleResultOverlay(result: BattleRoundResultSummary, viewerUserId: string) {
+    clearBattleResultOverlay();
+    ensureBattleResultStyleTag();
+
+    const isWinner = result.winnerIds.includes(viewerUserId);
+    const payout = Math.floor(Number(result.payouts[viewerUserId] ?? 0));
+    const payoutText = `${payout >= 0 ? '+' : ''}${payout} coins`;
+
+    const host = document.createElement('div');
+    host.style.position = 'fixed';
+    host.style.inset = '0';
+    host.style.zIndex = '2147483647';
+    host.style.pointerEvents = 'none';
+    host.style.display = 'flex';
+    host.style.alignItems = 'center';
+    host.style.justifyContent = 'center';
+    host.style.background = 'rgba(0, 0, 0, 0.48)';
+    host.style.backdropFilter = 'blur(1px)';
+    host.style.padding = '18px';
+
+    if (isWinner) {
+      const confettiWrap = document.createElement('div');
+      confettiWrap.style.position = 'absolute';
+      confettiWrap.style.inset = '0';
+      confettiWrap.style.overflow = 'hidden';
+      const confettiColors = ['#39ff14', '#facc15', '#00f0ff', '#ff2d78', '#ffffff'];
+      for (let index = 0; index < 26; index += 1) {
+        const piece = document.createElement('span');
+        piece.style.position = 'absolute';
+        piece.style.left = `${(index * 17) % 100}%`;
+        piece.style.top = '-16%';
+        piece.style.width = `${6 + (index % 4) * 2}px`;
+        piece.style.height = `${10 + (index % 5) * 2}px`;
+        piece.style.borderRadius = '2px';
+        piece.style.background = confettiColors[index % confettiColors.length];
+        piece.style.animation = `doomBattlePageConfettiFall ${1.8 + (index % 6) * 0.24}s linear ${(index % 7) * 0.17}s infinite`;
+        confettiWrap.appendChild(piece);
+      }
+      host.appendChild(confettiWrap);
+    }
+
+    const card = document.createElement('div');
+    card.style.position = 'relative';
+    card.style.maxWidth = 'min(460px, calc(100vw - 40px))';
+    card.style.width = '100%';
+    card.style.padding = '22px 20px';
+    card.style.borderRadius = '22px';
+    card.style.border = isWinner
+      ? '1px solid rgba(57,255,20,0.72)'
+      : '1px solid rgba(255,45,120,0.72)';
+    card.style.background = isWinner
+      ? 'linear-gradient(135deg, rgba(57,255,20,0.18), rgba(2,6,23,0.92))'
+      : 'linear-gradient(135deg, rgba(255,45,120,0.18), rgba(2,6,23,0.92))';
+    card.style.boxShadow = isWinner
+      ? '0 0 46px rgba(57,255,20,0.25)'
+      : '0 0 46px rgba(255,45,120,0.24)';
+    card.style.textAlign = 'center';
+    card.style.fontFamily = 'JetBrains Mono, Inter, system-ui, sans-serif';
+
+    const title = document.createElement('div');
+    title.textContent = isWinner ? 'YOU WIN' : 'BETTER LUCK NEXT TIME';
+    title.style.fontSize = 'clamp(34px, 8.5vw, 74px)';
+    title.style.fontWeight = '800';
+    title.style.lineHeight = '1';
+    title.style.letterSpacing = '0.06em';
+    title.style.color = isWinner ? '#39ff14' : '#ff2d78';
+    title.style.textShadow = isWinner
+      ? '0 0 18px rgba(57,255,20,0.7)'
+      : '0 0 16px rgba(255,45,120,0.65)';
+
+    const payoutLine = document.createElement('div');
+    payoutLine.textContent = payoutText;
+    payoutLine.style.marginTop = '10px';
+    payoutLine.style.fontSize = 'clamp(22px, 4.4vw, 38px)';
+    payoutLine.style.fontWeight = '700';
+    payoutLine.style.color = isWinner ? '#86efac' : '#fda4af';
+
+    const meta = document.createElement('div');
+    meta.textContent = `Room ${result.roomKey} • Pot ${result.pot} • Bet ${result.betCoins}`;
+    meta.style.marginTop = '10px';
+    meta.style.fontSize = '12px';
+    meta.style.opacity = '0.85';
+    meta.style.color = '#cbd5e1';
+
+    card.appendChild(title);
+    card.appendChild(payoutLine);
+    card.appendChild(meta);
+    host.appendChild(card);
+
+    (document.body ?? document.documentElement).appendChild(host);
+    battleResultOverlayHost = host;
+    battleResultHideTimer = window.setTimeout(() => {
+      clearBattleResultOverlay();
+    }, BATTLE_RESULT_OVERLAY_MS);
+  }
+
+  async function maybeShowBattleResultOverlay(response: GetBattleTimerResponse | undefined) {
+    const viewerUserId = response?.viewerUserId;
+    const result = response?.latestRoundResult;
+    if (!viewerUserId || !result || !result.roomId || !result.settledAt) return;
+
+    const resultKey = `${result.roomId}:${result.settledAt}`;
+    if (shownBattleResultKey === resultKey) return;
+
+    const storageKey = `doom_battle_result_seen_${viewerUserId}`;
+    try {
+      const cached = await chrome.storage.local.get(storageKey);
+      const seen = typeof cached[storageKey] === 'string' ? cached[storageKey] as string : null;
+      if (seen === resultKey) {
+        shownBattleResultKey = resultKey;
+        return;
+      }
+    } catch {
+      // Continue without durable dedupe.
+    }
+
+    shownBattleResultKey = resultKey;
+    showBattleResultOverlay(result, viewerUserId);
+
+    try {
+      await chrome.storage.local.set({ [storageKey]: resultKey });
+    } catch {
+      // Ignore storage write failures.
     }
   }
 
@@ -554,6 +710,7 @@ if (!config) {
       toastHost = null;
     }
     clearBattleTimerState();
+    clearBattleResultOverlay();
     detachCurrentTarget();
   });
 

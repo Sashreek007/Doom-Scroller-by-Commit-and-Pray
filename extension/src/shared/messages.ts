@@ -38,14 +38,27 @@ export interface GetBattleTimerMessage {
   type: 'GET_BATTLE_TIMER';
 }
 
+export interface BattleRoundResultSummary {
+  roomId: string;
+  roomKey: string;
+  gameType: string | null;
+  settledAt: string;
+  winnerIds: string[];
+  payouts: Record<string, number>;
+  pot: number;
+  betCoins: number;
+}
+
 export interface GetBattleTimerResponse {
   active: boolean;
+  viewerUserId?: string;
   roomId?: string;
   roomKey?: string;
   gameType?: string | null;
   roundStartedAt?: string;
   roundEndsAt?: string;
   timerSeconds?: number;
+  latestRoundResult?: BattleRoundResultSummary | null;
 }
 
 export interface AchievementToastPayload {
