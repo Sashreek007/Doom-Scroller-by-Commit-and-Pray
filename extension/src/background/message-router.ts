@@ -6,9 +6,6 @@ import { getSupabase } from './supabase-client';
 import { toCanonicalSite } from '../shared/constants';
 import { triggerOpportunisticSync } from './alarm-handlers';
 
-const TOTAL_CACHE_TTL_MS = 60000;
-const totalMetersCache = new Map<string, { value: number; updatedAt: number }>();
-
 export function handleMessage(
   message: ExtensionMessage,
   _sender: chrome.runtime.MessageSender,
@@ -126,11 +123,6 @@ async function getStats(): Promise<GetStatsResponse> {
 }
 
 async function getAccurateTotalMeters(userId: string): Promise<number | null> {
-  const cached = totalMetersCache.get(userId);
-  if (cached && (Date.now() - cached.updatedAt) < TOTAL_CACHE_TTL_MS) {
-    return cached.value;
-  }
-
   const supabase = getSupabase();
   const { data, error } = await supabase
     .from('scroll_sessions')
@@ -141,10 +133,5 @@ async function getAccurateTotalMeters(userId: string): Promise<number | null> {
     return null;
   }
 
-  const total = data.reduce((sum, row) => sum + Number(row.meters_scrolled ?? 0), 0);
-  totalMetersCache.set(userId, {
-    value: total,
-    updatedAt: Date.now(),
-  });
-  return total;
+  return data.reduce((sum, row) => sum + Number(row.meters_scrolled ?? 0), 0);
 }

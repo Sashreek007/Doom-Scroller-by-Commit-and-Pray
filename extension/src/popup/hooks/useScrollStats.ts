@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { GetStatsResponse } from '@/shared/messages';
 
 const CACHE_KEY = 'cached_scroll_stats';
@@ -12,6 +12,8 @@ export function useScrollStats() {
     totalMeters: 0,
   });
   const [loading, setLoading] = useState(true);
+  const requestSeqRef = useRef(0);
+  const latestAppliedRef = useRef(0);
 
   // Load cached stats immediately on mount
   useEffect(() => {
@@ -24,9 +26,11 @@ export function useScrollStats() {
   }, []);
 
   const refresh = useCallback(async () => {
+    const requestId = ++requestSeqRef.current;
     try {
       const response = await chrome.runtime.sendMessage({ type: 'GET_STATS' });
-      if (response) {
+      if (response && requestId >= latestAppliedRef.current) {
+        latestAppliedRef.current = requestId;
         setStats(response as GetStatsResponse);
         chrome.storage.local.set({ [CACHE_KEY]: response });
       }

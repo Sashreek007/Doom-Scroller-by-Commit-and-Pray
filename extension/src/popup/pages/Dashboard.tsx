@@ -65,7 +65,7 @@ export default function Dashboard() {
       {/* Total all-time */}
       <div className="card neon-border">
         <div className="flex items-center justify-between">
-          <span className="text-doom-muted text-xs font-mono">ALL TIME</span>
+          <span className="text-doom-muted text-xs font-mono">TOTAL DISTANCE</span>
           <span className="text-white font-mono font-bold">
             {stats.totalMeters < 1000
               ? `${Math.round(stats.totalMeters)}m`

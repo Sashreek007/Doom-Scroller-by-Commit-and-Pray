@@ -4,6 +4,11 @@ import type { User, Session } from '@supabase/supabase-js';
 import type { Profile } from '@/shared/types';
 import { ensureProfileExists, fetchProfile } from '@/shared/profile';
 
+const PROFILE_RESOLVE_TIMEOUT_MS = 10000;
+const PROFILE_RESOLVE_MAX_RETRIES = 3;
+const PROFILE_RETRY_DELAY_MS = 700;
+const AUTH_PROFILE_CACHE_PREFIX = 'cached_auth_profile_';
+
 interface AuthState {
   user: User | null;
   profile: Profile | null;
@@ -22,6 +27,29 @@ export function useAuth() {
   });
   const loadedUserId = useRef<string | null>(null);
   const loadedProfileUserId = useRef<string | null>(null);
+
+  const getProfileCacheKey = useCallback((userId: string) => `${AUTH_PROFILE_CACHE_PREFIX}${userId}`, []);
+
+  const readCachedProfile = useCallback(async (userId: string): Promise<Profile | null> => {
+    try {
+      const key = getProfileCacheKey(userId);
+      const result = await chrome.storage.local.get(key);
+      const cached = result[key] as Profile | undefined;
+      if (cached && cached.id === userId) return cached;
+    } catch {
+      // Ignore cache read issues and continue with network resolution.
+    }
+    return null;
+  }, [getProfileCacheKey]);
+
+  const writeCachedProfile = useCallback(async (profile: Profile) => {
+    try {
+      const key = getProfileCacheKey(profile.id);
+      await chrome.storage.local.set({ [key]: profile });
+    } catch {
+      // Ignore cache write issues; DB remains source of truth.
+    }
+  }, [getProfileCacheKey]);
 
   const ensureProfilePublic = useCallback(async (profile: Profile | null): Promise<Profile | null> => {
     if (!profile || profile.is_public) return profile;
@@ -44,6 +72,39 @@ export function useAuth() {
     return publicProfile;
   }, [ensureProfilePublic]);
 
+  const resolveProfileWithTimeout = useCallback(async (
+    user: User,
+  ): Promise<{ profile: Profile | null; timedOut: boolean }> => {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    try {
+      const timeoutPromise = new Promise<{ profile: null; timedOut: true }>((resolve) => {
+        timeoutId = setTimeout(() => resolve({ profile: null, timedOut: true }), PROFILE_RESOLVE_TIMEOUT_MS);
+      });
+      const profilePromise = resolveProfile(user).then((profile) => ({ profile, timedOut: false as const }));
+      return await Promise.race([profilePromise, timeoutPromise]);
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
+  }, [resolveProfile]);
+
+  const wait = useCallback((ms: number) => new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  }), []);
+
+  const resolveProfileRobust = useCallback(async (
+    user: User,
+  ): Promise<{ profile: Profile | null; timedOut: boolean }> => {
+    let last: { profile: Profile | null; timedOut: boolean } = { profile: null, timedOut: false };
+    for (let attempt = 0; attempt < PROFILE_RESOLVE_MAX_RETRIES; attempt += 1) {
+      last = await resolveProfileWithTimeout(user).catch(() => ({ profile: null, timedOut: false }));
+      if (last.profile) return last;
+      if (attempt < PROFILE_RESOLVE_MAX_RETRIES - 1) {
+        await wait(PROFILE_RETRY_DELAY_MS * (attempt + 1));
+      }
+    }
+    return last;
+  }, [resolveProfileWithTimeout, wait]);
+
   useEffect(() => {
     let mounted = true;
 
@@ -62,21 +123,33 @@ export function useAuth() {
           session,
           loading: false,
           profile: userChanged ? null : prev.profile,
-          profileError: null,
+          profileError: userChanged ? null : prev.profileError,
         }));
+
+        const cachedProfile = await readCachedProfile(userId);
+        if (cachedProfile && mounted) {
+          setState((prev) => {
+            if (prev.user?.id !== userId) return prev;
+            if (prev.profile && !userChanged) return prev;
+            return { ...prev, profile: cachedProfile, profileError: null };
+          });
+        }
 
         if (loadedProfileUserId.current === userId) return;
 
-        const profile = await resolveProfile(session.user).catch(() => null);
+        const { profile, timedOut } = await resolveProfileRobust(session.user);
         if (!mounted) return;
         if (profile) {
           loadedProfileUserId.current = userId;
+          void writeCachedProfile(profile);
           setState((prev) => ({ ...prev, profile, profileError: null }));
         } else {
           setState((prev) => ({
             ...prev,
             profile: null,
-            profileError: 'Could not load your profile from the database.',
+            profileError: timedOut
+              ? 'Profile sync timed out. Check connection and retry.'
+              : 'Could not load your profile from the database.',
           }));
         }
       } else {
@@ -86,11 +159,12 @@ export function useAuth() {
       }
     }
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (_event, session) => {
-        await loadSession(session);
-      },
-    );
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      // Avoid async work directly in callback; run it on next tick.
+      setTimeout(() => {
+        void loadSession(session);
+      }, 0);
+    });
 
     supabase.auth.getSession().then(({ data: { session } }) => {
       loadSession(session);
@@ -107,7 +181,7 @@ export function useAuth() {
       clearTimeout(timeout);
       subscription.unsubscribe();
     };
-  }, [resolveProfile]);
+  }, [readCachedProfile, resolveProfileRobust, writeCachedProfile]);
 
   const signUp = async (email: string, password: string, displayName: string) => {
     const { data, error } = await supabase.auth.signUp({
@@ -135,15 +209,27 @@ export function useAuth() {
       loadedProfileUserId.current = null;
       setState({ user, profile: null, session: data.session, loading: false, profileError: null });
 
-      resolveProfile(user).then((profile) => {
+      readCachedProfile(user.id).then((cachedProfile) => {
+        if (!cachedProfile) return;
+        setState((prev) => {
+          if (prev.user?.id !== user.id) return prev;
+          if (prev.profile) return prev;
+          return { ...prev, profile: cachedProfile, profileError: null };
+        });
+      }).catch(() => {});
+
+      resolveProfileRobust(user).then(({ profile, timedOut }) => {
         if (profile) {
           loadedProfileUserId.current = user.id;
+          void writeCachedProfile(profile);
           setState((prev) => ({ ...prev, profile, profileError: null }));
         } else {
           setState((prev) => ({
             ...prev,
             profile: null,
-            profileError: 'Could not load your profile from the database.',
+            profileError: timedOut
+              ? 'Profile sync timed out. Check connection and retry.'
+              : 'Could not load your profile from the database.',
           }));
         }
       }).catch(() => {
@@ -174,6 +260,7 @@ export function useAuth() {
     loadedProfileUserId.current = null;
     const profile = await fetchProfile(supabase, state.user.id);
     if (profile) loadedProfileUserId.current = state.user.id;
+    if (profile) void writeCachedProfile(profile);
     setState((prev) => ({
       ...prev,
       profile,
@@ -186,18 +273,21 @@ export function useAuth() {
     const user = state.user;
     loadedProfileUserId.current = null;
     setState((prev) => ({ ...prev, profileError: null }));
-    const profile = await resolveProfile(user).catch(() => null);
+    const { profile, timedOut } = await resolveProfileRobust(user);
     if (profile) {
       loadedProfileUserId.current = user.id;
+      void writeCachedProfile(profile);
       setState((prev) => ({ ...prev, profile, profileError: null }));
     } else {
       setState((prev) => ({
         ...prev,
         profile: null,
-        profileError: 'Could not load your profile from the database.',
+        profileError: timedOut
+          ? 'Profile sync timed out. Check connection and retry.'
+          : 'Could not load your profile from the database.',
       }));
     }
-  }, [resolveProfile, state.user]);
+  }, [resolveProfileRobust, state.user, writeCachedProfile]);
 
   return {
     ...state,

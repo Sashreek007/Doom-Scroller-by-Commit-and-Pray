@@ -1,6 +1,6 @@
 // Handles chrome.alarms for periodic data sync to Supabase
 
-import { drainBatches, restoreBatches } from './scroll-aggregator';
+import { confirmSyncedBatches, drainBatches, restoreBatches } from './scroll-aggregator';
 import { getSupabase } from './supabase-client';
 import { SYNC_INTERVAL_MINUTES } from '../shared/constants';
 import { ensureProfileExists } from '../shared/profile';
@@ -81,6 +81,7 @@ export async function syncToSupabaseNow() {
       // Restore drained batches so data is not lost and can be retried next alarm.
       restoreBatches(batches);
     } else {
+      confirmSyncedBatches(batches);
       console.log(`[DoomScroller] Synced ${sessions.length} session(s) to Supabase`);
       // Profile totals are updated by DB trigger on scroll_sessions insert.
     }
