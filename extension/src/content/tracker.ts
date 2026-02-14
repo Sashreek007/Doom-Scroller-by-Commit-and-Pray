@@ -7,6 +7,7 @@ import { METERS_PER_PIXEL, CONTENT_FLUSH_INTERVAL_MS } from '../shared/constants
 import { metersToCoins } from '../shared/coins';
 import type {
   AchievementToastPayload,
+  GetBattleTimerResponse,
   GetStatsResponse,
   ScrollUpdateMessage,
 } from '../shared/messages';
@@ -18,6 +19,8 @@ const TOAST_ENTER_MS = 170;
 const TOAST_EXIT_MS = 200;
 const COIN_TOAST_VISIBLE_MS = 1300;
 const ACHIEVEMENT_TOAST_VISIBLE_MS = 2600;
+const BATTLE_TIMER_SYNC_INTERVAL_MS = 2000;
+const BATTLE_TIMER_TICK_INTERVAL_MS = 250;
 
 const config = getSiteConfig();
 if (!config) {
@@ -35,8 +38,195 @@ if (!config) {
   let baselineRetryTimer: number | null = null;
   let toastHost: HTMLDivElement | null = null;
   let nextToastAvailableAt = 0;
+  let battleTimerHost: HTMLDivElement | null = null;
+  let battleTimerLabel: HTMLDivElement | null = null;
+  let battleTimerValue: HTMLDivElement | null = null;
+  let battleTimerMeta: HTMLDivElement | null = null;
+  let battleTimerState: {
+    roomKey: string;
+    gameType: string | null;
+    roundStartMs: number;
+    roundEndMs: number;
+  } | null = null;
 
   const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function formatCountdownFromMs(ms: number): string {
+    const safeMs = Math.max(0, ms);
+    const totalSeconds = Math.ceil(safeMs / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  }
+
+  function getBattleGameLabel(gameType: string | null): string {
+    if (gameType === 'scroll_sprint') return 'Scroll Sprint';
+    if (gameType === 'target_chase') return 'Target Chase';
+    if (gameType === 'app_lockdown') return 'App Lockdown';
+    return 'Battle';
+  }
+
+  function ensureBattleTimerHost(): HTMLDivElement {
+    if (
+      battleTimerHost
+      && battleTimerLabel
+      && battleTimerValue
+      && battleTimerMeta
+      && document.documentElement.contains(battleTimerHost)
+    ) {
+      return battleTimerHost;
+    }
+
+    const host = document.createElement('div');
+    host.style.position = 'fixed';
+    host.style.top = '18px';
+    host.style.left = '50%';
+    host.style.transform = 'translateX(-50%)';
+    host.style.zIndex = '2147483645';
+    host.style.pointerEvents = 'none';
+    host.style.minWidth = '178px';
+    host.style.maxWidth = 'calc(100vw - 24px)';
+    host.style.padding = '8px 14px 10px';
+    host.style.borderRadius = '14px';
+    host.style.border = '1px solid rgba(34,197,94,0.72)';
+    host.style.background = 'linear-gradient(135deg, rgba(34,197,94,0.25), rgba(15,23,42,0.88))';
+    host.style.backdropFilter = 'blur(8px)';
+    host.style.boxShadow = '0 0 24px rgba(34,197,94,0.36)';
+    host.style.display = 'flex';
+    host.style.flexDirection = 'column';
+    host.style.alignItems = 'center';
+    host.style.gap = '2px';
+    host.style.fontFamily = 'JetBrains Mono, Inter, system-ui, sans-serif';
+
+    const label = document.createElement('div');
+    label.style.fontSize = '10px';
+    label.style.textTransform = 'uppercase';
+    label.style.letterSpacing = '0.08em';
+    label.style.fontWeight = '700';
+    label.style.color = '#86efac';
+    label.textContent = 'Battle time left';
+
+    const value = document.createElement('div');
+    value.style.fontSize = '30px';
+    value.style.lineHeight = '1';
+    value.style.fontWeight = '800';
+    value.style.letterSpacing = '0.04em';
+    value.style.color = '#39ff14';
+    value.style.textShadow = '0 0 12px rgba(57,255,20,0.7)';
+    value.textContent = '0:00';
+
+    const meta = document.createElement('div');
+    meta.style.fontSize = '10px';
+    meta.style.letterSpacing = '0.05em';
+    meta.style.opacity = '0.9';
+    meta.style.color = '#d1fae5';
+    meta.style.textAlign = 'center';
+    meta.textContent = 'Room ------';
+
+    host.appendChild(label);
+    host.appendChild(value);
+    host.appendChild(meta);
+    (document.body ?? document.documentElement).appendChild(host);
+
+    battleTimerHost = host;
+    battleTimerLabel = label;
+    battleTimerValue = value;
+    battleTimerMeta = meta;
+    return host;
+  }
+
+  function removeBattleTimerHost() {
+    if (battleTimerHost) {
+      battleTimerHost.remove();
+      battleTimerHost = null;
+    }
+    battleTimerLabel = null;
+    battleTimerValue = null;
+    battleTimerMeta = null;
+  }
+
+  function clearBattleTimerState() {
+    battleTimerState = null;
+    removeBattleTimerHost();
+  }
+
+  function renderBattleTimer() {
+    if (!battleTimerState) {
+      removeBattleTimerHost();
+      return;
+    }
+
+    const now = Date.now();
+    if (now >= battleTimerState.roundEndMs) {
+      clearBattleTimerState();
+      return;
+    }
+
+    const prestart = now < battleTimerState.roundStartMs;
+    const remainingMs = prestart
+      ? battleTimerState.roundStartMs - now
+      : battleTimerState.roundEndMs - now;
+
+    const host = ensureBattleTimerHost();
+    const label = battleTimerLabel;
+    const value = battleTimerValue;
+    const meta = battleTimerMeta;
+    if (!label || !value || !meta) return;
+
+    if (prestart) {
+      host.style.border = '1px solid rgba(34,211,238,0.82)';
+      host.style.background = 'linear-gradient(135deg, rgba(34,211,238,0.28), rgba(15,23,42,0.88))';
+      host.style.boxShadow = '0 0 24px rgba(34,211,238,0.36)';
+      label.style.color = '#67e8f9';
+      value.style.color = '#67e8f9';
+      value.style.textShadow = '0 0 12px rgba(34,211,238,0.66)';
+      label.textContent = 'Battle starts in';
+    } else {
+      host.style.border = '1px solid rgba(34,197,94,0.72)';
+      host.style.background = 'linear-gradient(135deg, rgba(34,197,94,0.25), rgba(15,23,42,0.88))';
+      host.style.boxShadow = '0 0 24px rgba(34,197,94,0.36)';
+      label.style.color = '#86efac';
+      value.style.color = '#39ff14';
+      value.style.textShadow = '0 0 12px rgba(57,255,20,0.7)';
+      label.textContent = 'Battle time left';
+    }
+
+    value.textContent = formatCountdownFromMs(remainingMs);
+    meta.textContent = `Room ${battleTimerState.roomKey} • ${getBattleGameLabel(battleTimerState.gameType)}`;
+  }
+
+  function applyBattleTimerResponse(response: GetBattleTimerResponse | undefined) {
+    if (!response?.active) {
+      clearBattleTimerState();
+      return;
+    }
+
+    const roundStartMs = Date.parse(response.roundStartedAt ?? '');
+    const roundEndMs = Date.parse(response.roundEndsAt ?? '');
+    if (!Number.isFinite(roundStartMs) || !Number.isFinite(roundEndMs) || roundEndMs <= roundStartMs) {
+      clearBattleTimerState();
+      return;
+    }
+
+    battleTimerState = {
+      roomKey: response.roomKey || '------',
+      gameType: response.gameType ?? null,
+      roundStartMs,
+      roundEndMs,
+    };
+    renderBattleTimer();
+  }
+
+  async function syncBattleTimer() {
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: 'GET_BATTLE_TIMER',
+      }) as GetBattleTimerResponse | undefined;
+      applyBattleTimerResponse(response);
+    } catch {
+      // Keep existing timer state on transient background/network errors.
+    }
+  }
 
   function ensureToastHost(): HTMLDivElement {
     if (toastHost && document.documentElement.contains(toastHost)) return toastHost;
@@ -318,6 +508,13 @@ if (!config) {
   bindToBestTarget();
   const rebindInterval = setInterval(bindToBestTarget, REBIND_INTERVAL_MS);
   void loadCoinBaseline();
+  void syncBattleTimer();
+  const battleTimerSyncInterval = window.setInterval(() => {
+    void syncBattleTimer();
+  }, BATTLE_TIMER_SYNC_INTERVAL_MS);
+  const battleTimerTickInterval = window.setInterval(() => {
+    renderBattleTimer();
+  }, BATTLE_TIMER_TICK_INTERVAL_MS);
 
   // Periodically flush accumulated scroll data to background service worker
   const flushInterval = setInterval(() => {
@@ -346,6 +543,8 @@ if (!config) {
   window.addEventListener('beforeunload', () => {
     clearInterval(rebindInterval);
     clearInterval(flushInterval);
+    clearInterval(battleTimerSyncInterval);
+    clearInterval(battleTimerTickInterval);
     chrome.runtime.onMessage.removeListener(runtimeMessageListener);
     if (baselineRetryTimer !== null) {
       window.clearTimeout(baselineRetryTimer);
@@ -354,6 +553,7 @@ if (!config) {
       toastHost.remove();
       toastHost = null;
     }
+    clearBattleTimerState();
     detachCurrentTarget();
   });
 

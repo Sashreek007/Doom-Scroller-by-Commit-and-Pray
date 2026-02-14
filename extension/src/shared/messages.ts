@@ -34,6 +34,20 @@ export interface GetStatsResponse {
   totalMeters: number;
 }
 
+export interface GetBattleTimerMessage {
+  type: 'GET_BATTLE_TIMER';
+}
+
+export interface GetBattleTimerResponse {
+  active: boolean;
+  roomId?: string;
+  roomKey?: string;
+  gameType?: string | null;
+  roundStartedAt?: string;
+  roundEndsAt?: string;
+  timerSeconds?: number;
+}
+
 export interface AchievementToastPayload {
   eventKey: string;
   title: string;
@@ -72,4 +86,5 @@ export type ExtensionMessage =
   | ScrollUpdateMessage
   | BattleScrollMessage
   | BattlePlayerQuitMessage
-  | GetStatsMessage;
+  | GetStatsMessage
+  | GetBattleTimerMessage;

@@ -1,7 +1,11 @@
 // Routes messages from content scripts and popup to appropriate handlers
 
 import { addScrollData, getBatches } from './scroll-aggregator';
-import type { ExtensionMessage, GetStatsResponse } from '../shared/messages';
+import type {
+  ExtensionMessage,
+  GetBattleTimerResponse,
+  GetStatsResponse,
+} from '../shared/messages';
 import { getSupabase } from './supabase-client';
 import { toCanonicalSite } from '../shared/constants';
 import { triggerOpportunisticSync } from './alarm-handlers';
@@ -17,8 +21,10 @@ import { enqueueAchievementJob, triggerAchievementQueueProcessing } from './achi
 
 const DB_STATS_REFRESH_INTERVAL_MS = 5000;
 const INITIAL_DB_REFRESH_WAIT_MS = 250;
+const BATTLE_TIMER_CACHE_TTL_MS = 1500;
 
 const dbRefreshInFlight = new Map<string, Promise<void>>();
+const battleTimerCache = new Map<string, { updatedAt: number; value: GetBattleTimerResponse }>();
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -28,6 +34,58 @@ async function getActiveUserId(): Promise<string | null> {
   const supabase = getSupabase();
   const { data: { session } } = await supabase.auth.getSession();
   return session?.user?.id ?? null;
+}
+
+async function fetchBattleTimerFromDb(userId: string): Promise<GetBattleTimerResponse> {
+  const supabase = getSupabase();
+  const { data: membership, error: membershipError } = await supabase
+    .from('battle_room_members')
+    .select('room_id, joined_at')
+    .eq('user_id', userId)
+    .eq('status', 'joined')
+    .order('joined_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (membershipError) return { active: false };
+  if (!membership?.room_id) return { active: false };
+
+  const { data: room, error: roomError } = await supabase
+    .from('battle_rooms')
+    .select('id, room_key, status, selected_game_type, round_started_at, round_ends_at, timer_seconds')
+    .eq('id', membership.room_id)
+    .maybeSingle();
+
+  if (roomError || !room) return { active: false };
+  if (
+    room.status !== 'active'
+    || !room.round_started_at
+    || !room.round_ends_at
+  ) {
+    return { active: false };
+  }
+
+  return {
+    active: true,
+    roomId: room.id as string,
+    roomKey: room.room_key as string,
+    gameType: (room.selected_game_type as string | null) ?? null,
+    roundStartedAt: room.round_started_at as string,
+    roundEndsAt: room.round_ends_at as string,
+    timerSeconds: Number(room.timer_seconds ?? 0),
+  };
+}
+
+async function getBattleTimer(userId: string): Promise<GetBattleTimerResponse> {
+  const cached = battleTimerCache.get(userId);
+  const now = Date.now();
+  if (cached && (now - cached.updatedAt) < BATTLE_TIMER_CACHE_TTL_MS) {
+    return cached.value;
+  }
+
+  const value = await fetchBattleTimerFromDb(userId);
+  battleTimerCache.set(userId, { updatedAt: now, value });
+  return value;
 }
 
 function buildTodayFromSessions(
@@ -160,6 +218,16 @@ export function handleMessage(
         sendResponse({ todayMeters: 0, todayBysite: {}, totalMeters: 0 });
       });
       return true; // async response
+    }
+
+    case 'GET_BATTLE_TIMER': {
+      getActiveUserId()
+        .then((userId) => (userId ? getBattleTimer(userId) : { active: false }))
+        .then(sendResponse)
+        .catch(() => {
+          sendResponse({ active: false });
+        });
+      return true;
     }
 
     default:
