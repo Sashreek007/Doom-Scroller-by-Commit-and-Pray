@@ -100,6 +100,16 @@ function App() {
             onBack={viewingProfileId ? () => setActivePage('home') : undefined}
           />
         );
+      case 'settings':
+        return (
+          <Settings
+            profile={profile!}
+            onSignOut={signOut}
+            onProfileUpdated={() => {
+              // Profile will auto-refresh via useAuth listener
+            }}
+          />
+        );
       default:
         return <Dashboard />;
     }
@@ -123,10 +133,11 @@ function App() {
             @{profile?.username}
           </button>
           <button
-            onClick={signOut}
-            className="text-doom-muted hover:text-neon-pink text-xs transition-colors"
+            onClick={() => setActivePage('settings')}
+            className="text-doom-muted hover:text-white text-sm transition-colors"
+            title="Settings"
           >
-            ✕
+            ⚙
           </button>
         </div>
       </header>
