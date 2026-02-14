@@ -4,12 +4,14 @@ import Login from './pages/Login';
 import Signup from './pages/Signup';
 import SetUsername from './pages/SetUsername';
 import Dashboard from './pages/Dashboard';
+import Profile from './pages/Profile';
 import BottomNav from './components/BottomNav';
 
 function App() {
   const { user, profile, loading, signIn, signUp, signOut, updateUsername } = useAuth();
   const [authView, setAuthView] = useState<'login' | 'signup'>('login');
   const [activePage, setActivePage] = useState('home');
+  const [viewingProfileId, setViewingProfileId] = useState<string | null>(null);
 
   if (loading) {
     return (
@@ -71,6 +73,14 @@ function App() {
         return <div className="text-center text-doom-muted py-8 font-mono text-sm">Battles coming in v3...</div>;
       case 'chat':
         return <div className="text-center text-doom-muted py-8 font-mono text-sm">AI Chat coming in v2...</div>;
+      case 'profile':
+        return (
+          <Profile
+            userId={viewingProfileId ?? user!.id}
+            isOwnProfile={!viewingProfileId || viewingProfileId === user!.id}
+            onBack={viewingProfileId ? () => setActivePage('home') : undefined}
+          />
+        );
       default:
         return <Dashboard />;
     }
@@ -84,9 +94,15 @@ function App() {
           DoomScroller
         </h1>
         <div className="flex items-center gap-2">
-          <span className="text-doom-muted text-xs font-mono">
+          <button
+            onClick={() => {
+              setViewingProfileId(null);
+              setActivePage('profile');
+            }}
+            className="text-doom-muted text-xs font-mono hover:text-neon-cyan transition-colors"
+          >
             @{profile?.username}
-          </span>
+          </button>
           <button
             onClick={signOut}
             className="text-doom-muted hover:text-neon-pink text-xs transition-colors"
