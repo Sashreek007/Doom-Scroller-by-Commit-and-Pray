@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { RealtimeChannel } from '@supabase/supabase-js';
+import type { PostgrestError, RealtimeChannel } from '@supabase/supabase-js';
 import { supabase } from '@/shared/supabase';
 import UserAvatar from '../components/UserAvatar';
 
-type RoomPhase = 'lobby' | 'game_select';
+type BattleRoomStatus = 'lobby' | 'game_select' | 'active' | 'closed';
+type BattleMemberStatus = 'joined' | 'left' | 'kicked';
+type BattleMemberRole = 'host' | 'player';
 type GameTypeKey = 'scroll_sprint' | 'target_chase' | 'app_lockdown';
 
 interface BattleProps {
@@ -14,21 +16,36 @@ interface BattleProps {
   availableCoins: number;
 }
 
+interface BattleRoomRow {
+  id: string;
+  room_key: string;
+  host_id: string;
+  status: BattleRoomStatus;
+  bet_coins: number;
+  timer_seconds: number;
+  selected_game_type: GameTypeKey | null;
+  max_players: number;
+  created_at: string;
+  updated_at: string;
+}
+
+interface BattleRoomMemberRow {
+  id: string;
+  room_id: string;
+  user_id: string;
+  role: BattleMemberRole;
+  status: BattleMemberStatus;
+  joined_at: string;
+  left_at: string | null;
+}
+
 interface BattlePlayer {
   userId: string;
   username: string;
   displayName: string;
   avatarUrl: string | null;
-  joinedAt: number;
-}
-
-interface BattleRoomState {
-  hostId: string;
-  phase: RoomPhase;
-  betCoins: number;
-  timerSeconds: number;
-  selectedGameType: GameTypeKey | null;
-  updatedAt: number;
+  joinedAt: string;
+  role: BattleMemberRole;
 }
 
 interface BattleGameOption {
@@ -38,11 +55,12 @@ interface BattleGameOption {
   details: string;
 }
 
-const ROOM_KEY_LENGTH = 6;
-const MAX_PLAYERS = 4;
+const DEFAULT_MAX_PLAYERS = 4;
 const DEFAULT_TIMER_SECONDS = 120;
 const TIMER_OPTIONS_SECONDS = [60, 120, 180, 300];
+const ROOM_KEY_LENGTH = 6;
 const JOIN_KEY_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const DB_REFRESH_DEBOUNCE_MS = 120;
 
 const GAME_OPTIONS: BattleGameOption[] = [
   {
@@ -77,74 +95,16 @@ function generateRoomKey(): string {
   return key;
 }
 
-function toSafeNumber(value: unknown, fallback: number): number {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return fallback;
-  return parsed;
-}
-
-function parseRoomState(payload: unknown): BattleRoomState | null {
-  if (!payload || typeof payload !== 'object') return null;
-  const data = payload as Record<string, unknown>;
-  const hostId = typeof data.hostId === 'string' ? data.hostId : null;
-  const phase = data.phase === 'lobby' || data.phase === 'game_select' ? data.phase : null;
-  const selectedGameType = data.selectedGameType;
-  const normalizedSelectedGame: GameTypeKey | null = selectedGameType === 'scroll_sprint'
-    || selectedGameType === 'target_chase'
-    || selectedGameType === 'app_lockdown'
-    ? selectedGameType
-    : null;
-
-  if (!hostId || !phase) return null;
-
-  return {
-    hostId,
-    phase,
-    betCoins: Math.max(0, Math.floor(toSafeNumber(data.betCoins, 0))),
-    timerSeconds: Math.max(30, Math.floor(toSafeNumber(data.timerSeconds, DEFAULT_TIMER_SECONDS))),
-    selectedGameType: normalizedSelectedGame,
-    updatedAt: Math.max(0, toSafeNumber(data.updatedAt, Date.now())),
-  };
-}
-
-function mapPresenceToPlayers(state: unknown): BattlePlayer[] {
-  if (!state || typeof state !== 'object') return [];
-
-  const presenceState = state as Record<string, unknown>;
-  const seen = new Map<string, BattlePlayer>();
-
-  for (const metas of Object.values(presenceState)) {
-    if (!Array.isArray(metas)) continue;
-
-    for (const meta of metas) {
-      if (!meta || typeof meta !== 'object') continue;
-      const entry = meta as Record<string, unknown>;
-      const userId = typeof entry.userId === 'string' ? entry.userId : null;
-      if (!userId) continue;
-
-      const player: BattlePlayer = {
-        userId,
-        username: typeof entry.username === 'string' ? entry.username : 'user',
-        displayName: typeof entry.displayName === 'string' ? entry.displayName : 'User',
-        avatarUrl: typeof entry.avatarUrl === 'string' ? entry.avatarUrl : null,
-        joinedAt: toSafeNumber(entry.joinedAt, Date.now()),
-      };
-
-      const existing = seen.get(userId);
-      if (!existing || player.joinedAt < existing.joinedAt) {
-        seen.set(userId, player);
-      }
-    }
-  }
-
-  return [...seen.values()]
-    .sort((a, b) => a.joinedAt - b.joinedAt);
-}
-
 function formatTimer(seconds: number): string {
   if (seconds < 60) return `${seconds}s`;
   if (seconds % 60 === 0) return `${seconds / 60}m`;
   return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
+function clampBet(rawValue: number, availableCoins: number): number {
+  const max = Math.max(0, Math.floor(availableCoins));
+  const safeValue = Number.isFinite(rawValue) ? Math.floor(rawValue) : 0;
+  return Math.min(max, Math.max(0, safeValue));
 }
 
 function getGameLabel(gameType: GameTypeKey | null): string {
@@ -153,10 +113,15 @@ function getGameLabel(gameType: GameTypeKey | null): string {
   return option?.title ?? gameType;
 }
 
-function clampBet(rawValue: number, availableCoins: number): number {
-  const max = Math.max(0, Math.floor(availableCoins));
-  const safeValue = Number.isFinite(rawValue) ? Math.floor(rawValue) : 0;
-  return Math.min(max, Math.max(0, safeValue));
+function parseDbError(error: PostgrestError | null): string {
+  if (!error) return 'Unexpected database error';
+  if (error.code === '42P01') return 'Battle tables are not deployed yet. Run latest migration.';
+  if (error.code === '23505') return 'Duplicate value conflict. Try again.';
+  return error.message || 'Unexpected database error';
+}
+
+function rankPlayersByJoinTime(players: BattlePlayer[]): BattlePlayer[] {
+  return [...players].sort((a, b) => new Date(a.joinedAt).getTime() - new Date(b.joinedAt).getTime());
 }
 
 export default function Battle({
@@ -166,256 +131,500 @@ export default function Battle({
   avatarUrl,
   availableCoins,
 }: BattleProps) {
-  const [joinKeyInput, setJoinKeyInput] = useState('');
-  const [roomKey, setRoomKey] = useState<string | null>(null);
-  const [isHost, setIsHost] = useState(false);
+  const [roomKeyInput, setRoomKeyInput] = useState('');
+  const [room, setRoom] = useState<BattleRoomRow | null>(null);
   const [players, setPlayers] = useState<BattlePlayer[]>([]);
-  const [roomState, setRoomState] = useState<BattleRoomState | null>(null);
+  const [loadingRoom, setLoadingRoom] = useState(true);
+  const [joining, setJoining] = useState(false);
+  const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const [statusText, setStatusText] = useState('Disconnected');
-  const [joining, setJoining] = useState(false);
 
-  const channelRef = useRef<RealtimeChannel | null>(null);
-  const isHostRef = useRef(false);
-  const roomStateRef = useRef<BattleRoomState | null>(null);
+  const refreshTimeoutRef = useRef<number | null>(null);
+  const roomSubRef = useRef<RealtimeChannel | null>(null);
+  const refreshInFlightRef = useRef(false);
+  const queuedRefreshRef = useRef(false);
 
-  const myPlayer = useMemo<BattlePlayer>(() => ({
-    userId,
-    username,
-    displayName,
-    avatarUrl,
-    joinedAt: Date.now(),
-  }), [avatarUrl, displayName, userId, username]);
+  const isHost = Boolean(room && room.host_id === userId);
+  const maxPlayers = room?.max_players ?? DEFAULT_MAX_PLAYERS;
+  const rankedPlayers = useMemo(() => rankPlayersByJoinTime(players), [players]);
+  const roomIsFull = rankedPlayers.length >= maxPlayers;
+  const canStart = isHost && room?.status === 'lobby' && rankedPlayers.length >= 2;
 
-  const hostStillPresent = useMemo(() => {
-    if (!roomState?.hostId) return true;
-    return players.some((player) => player.userId === roomState.hostId);
-  }, [players, roomState?.hostId]);
-  const canStart = isHost
-    && roomState?.phase === 'lobby'
-    && players.length >= 2
-    && players.length <= MAX_PLAYERS
-    && hostStillPresent;
-  const roomIsFull = players.length >= MAX_PLAYERS;
-
-  const updatePlayersFromPresence = useCallback((channel: RealtimeChannel) => {
-    const nextPlayers = mapPresenceToPlayers(channel.presenceState());
-    setPlayers(nextPlayers);
-  }, []);
-
-  const broadcastRoomState = useCallback(async (nextState: BattleRoomState) => {
-    const channel = channelRef.current;
-    if (!channel) return;
-    await channel.send({
-      type: 'broadcast',
-      event: 'room_state',
-      payload: nextState,
-    });
-  }, []);
-
-  const setHostRoomState = useCallback((patch: Partial<BattleRoomState>) => {
-    if (!isHostRef.current) return;
-
-    setRoomState((prev) => {
-      if (!prev) return prev;
-      const nextState: BattleRoomState = {
-        ...prev,
-        ...patch,
-        updatedAt: Date.now(),
-      };
-      roomStateRef.current = nextState;
-      void broadcastRoomState(nextState);
-      return nextState;
-    });
-  }, [broadcastRoomState]);
-
-  const leaveRoom = useCallback(async () => {
-    setJoining(false);
-    setStatusText('Disconnected');
-    setCopied(false);
-    setInfo(null);
-    setError(null);
+  const clearRoomState = useCallback(() => {
+    setRoom(null);
     setPlayers([]);
-    setRoomState(null);
-    roomStateRef.current = null;
-    isHostRef.current = false;
-    setIsHost(false);
-    setRoomKey(null);
-
-    const channel = channelRef.current;
-    channelRef.current = null;
-    if (channel) {
-      try {
-        await supabase.removeChannel(channel);
-      } catch {
-        // Ignore channel cleanup errors.
-      }
-    }
   }, []);
 
-  const connectToRoom = useCallback(async (
-    key: string,
-    asHost: boolean,
-    initialState: BattleRoomState | null,
-  ) => {
-    await leaveRoom();
+  const loadRoomSnapshot = useCallback(async (roomId: string): Promise<void> => {
+    const { data: roomRow, error: roomError } = await supabase
+      .from('battle_rooms')
+      .select('*')
+      .eq('id', roomId)
+      .maybeSingle();
 
-    setJoining(true);
-    setStatusText('Connecting...');
-    setError(null);
-    setInfo(null);
-    setRoomKey(key);
-    setIsHost(asHost);
-    isHostRef.current = asHost;
-    setRoomState(initialState);
-    roomStateRef.current = initialState;
-
-    const channel = supabase.channel(`battle-room:${key.toLowerCase()}`, {
-      config: {
-        broadcast: { self: true },
-        presence: { key: userId },
-      },
-    });
-
-    channel
-      .on('presence', { event: 'sync' }, () => {
-        updatePlayersFromPresence(channel);
-      })
-      .on('broadcast', { event: 'room_state' }, ({ payload }) => {
-        const incoming = parseRoomState(payload);
-        if (!incoming) return;
-
-        const current = roomStateRef.current;
-        if (!current || incoming.updatedAt >= current.updatedAt) {
-          roomStateRef.current = incoming;
-          setRoomState(incoming);
-        }
-      })
-      .on('broadcast', { event: 'state_request' }, () => {
-        if (!isHostRef.current || !roomStateRef.current) return;
-        void broadcastRoomState(roomStateRef.current);
-      });
-
-    channel.subscribe(async (status) => {
-      setStatusText(status.replace('_', ' '));
-
-      if (status === 'SUBSCRIBED') {
-        const trackResponse = await channel.track({
-          userId: myPlayer.userId,
-          username: myPlayer.username,
-          displayName: myPlayer.displayName,
-          avatarUrl: myPlayer.avatarUrl,
-          joinedAt: Date.now(),
-        });
-
-        setJoining(false);
-
-        if (trackResponse !== 'ok') {
-          setError('Could not join room presence. Try again.');
-          return;
-        }
-
-        if (asHost && roomStateRef.current) {
-          void broadcastRoomState(roomStateRef.current);
-        } else {
-          await channel.send({
-            type: 'broadcast',
-            event: 'state_request',
-            payload: { requestedAt: Date.now(), requesterId: userId },
-          });
-          setInfo('Joined room. Waiting for host to start.');
-        }
-      }
-
-      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-        setJoining(false);
-        setError('Room connection lost. Rejoin the battle room.');
-      }
-    });
-
-    channelRef.current = channel;
-  }, [broadcastRoomState, leaveRoom, myPlayer.avatarUrl, myPlayer.displayName, myPlayer.userId, myPlayer.username, updatePlayersFromPresence, userId]);
-
-  useEffect(() => {
-    return () => {
-      void leaveRoom();
-    };
-  }, [leaveRoom]);
-
-  useEffect(() => {
-    if (!roomKey) return;
-    if (players.length <= MAX_PLAYERS) return;
-
-    if (isHost) {
-      setError('Room limit is 4 players. Ask extra players to leave.');
+    if (roomError) throw new Error(parseDbError(roomError));
+    if (!roomRow) {
+      clearRoomState();
       return;
     }
 
-    const myIndex = players.findIndex((player) => player.userId === userId);
-    if (myIndex >= MAX_PLAYERS || myIndex === -1) {
-      void leaveRoom().finally(() => {
-        setError('Room is full (4 players max).');
-      });
+    const typedRoom = roomRow as BattleRoomRow;
+    if (typedRoom.status === 'closed') {
+      clearRoomState();
+      setInfo('Battle room is closed.');
+      return;
     }
-  }, [isHost, leaveRoom, players, roomKey, userId]);
 
-  const handleCreateRoom = async () => {
-    const key = generateRoomKey();
-    const initialState: BattleRoomState = {
-      hostId: userId,
-      phase: 'lobby',
-      betCoins: clampBet(Math.min(10, availableCoins), availableCoins),
-      timerSeconds: DEFAULT_TIMER_SECONDS,
-      selectedGameType: null,
-      updatedAt: Date.now(),
+    const { data: myMembership, error: myMembershipError } = await supabase
+      .from('battle_room_members')
+      .select('status')
+      .eq('room_id', roomId)
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (myMembershipError) throw new Error(parseDbError(myMembershipError));
+    const myStatus = (myMembership?.status as BattleMemberStatus | undefined) ?? null;
+
+    if (myStatus === 'kicked') {
+      clearRoomState();
+      setError('You were kicked from this room by the host.');
+      return;
+    }
+
+    if (myStatus !== 'joined') {
+      clearRoomState();
+      return;
+    }
+
+    const { data: memberRows, error: memberError } = await supabase
+      .from('battle_room_members')
+      .select('*')
+      .eq('room_id', roomId)
+      .eq('status', 'joined')
+      .order('joined_at', { ascending: true });
+
+    if (memberError) throw new Error(parseDbError(memberError));
+    const typedMembers = (memberRows as BattleRoomMemberRow[] | null) ?? [];
+
+    const profileIds = typedMembers.map((member) => member.user_id);
+    let profileMap = new Map<string, { username: string; display_name: string; avatar_url: string | null }>();
+
+    if (profileIds.length > 0) {
+      const { data: profileRows, error: profileError } = await supabase
+        .from('profiles')
+        .select('id, username, display_name, avatar_url')
+        .in('id', profileIds);
+
+      if (profileError) throw new Error(parseDbError(profileError));
+
+      for (const row of profileRows ?? []) {
+        profileMap.set(row.id as string, {
+          username: (row.username as string) ?? 'user',
+          display_name: (row.display_name as string) ?? 'User',
+          avatar_url: (row.avatar_url as string | null) ?? null,
+        });
+      }
+    }
+
+    const nextPlayers = typedMembers.map((member) => {
+      const profile = profileMap.get(member.user_id);
+      const isSelf = member.user_id === userId;
+      return {
+        userId: member.user_id,
+        username: profile?.username ?? (isSelf ? username : 'user'),
+        displayName: profile?.display_name ?? (isSelf ? displayName : 'User'),
+        avatarUrl: profile?.avatar_url ?? (isSelf ? avatarUrl : null),
+        joinedAt: member.joined_at,
+        role: member.role,
+      } satisfies BattlePlayer;
+    });
+
+    setRoom(typedRoom);
+    setPlayers(nextPlayers);
+  }, [avatarUrl, clearRoomState, displayName, userId, username]);
+
+  const refreshRoom = useCallback(async (roomId: string) => {
+    if (refreshInFlightRef.current) {
+      queuedRefreshRef.current = true;
+      return;
+    }
+
+    refreshInFlightRef.current = true;
+    try {
+      do {
+        queuedRefreshRef.current = false;
+        await loadRoomSnapshot(roomId);
+      } while (queuedRefreshRef.current);
+    } finally {
+      refreshInFlightRef.current = false;
+    }
+  }, [loadRoomSnapshot]);
+
+  const scheduleRefresh = useCallback((roomId: string) => {
+    if (refreshTimeoutRef.current != null) {
+      window.clearTimeout(refreshTimeoutRef.current);
+    }
+    refreshTimeoutRef.current = window.setTimeout(() => {
+      refreshTimeoutRef.current = null;
+      void refreshRoom(roomId);
+    }, DB_REFRESH_DEBOUNCE_MS);
+  }, [refreshRoom]);
+
+  const subscribeToRoom = useCallback((roomId: string) => {
+    if (roomSubRef.current) {
+      void supabase.removeChannel(roomSubRef.current);
+      roomSubRef.current = null;
+    }
+
+    const channel = supabase
+      .channel(`battle-room-db:${roomId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'battle_rooms', filter: `id=eq.${roomId}` },
+        () => {
+          scheduleRefresh(roomId);
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'battle_room_members', filter: `room_id=eq.${roomId}` },
+        () => {
+          scheduleRefresh(roomId);
+        },
+      )
+      .subscribe();
+
+    roomSubRef.current = channel;
+  }, [scheduleRefresh]);
+
+  const bootstrapRoom = useCallback(async () => {
+    setLoadingRoom(true);
+    setError(null);
+    setInfo(null);
+
+    try {
+      const { data: joinedMembership, error: membershipError } = await supabase
+        .from('battle_room_members')
+        .select('room_id, joined_at')
+        .eq('user_id', userId)
+        .eq('status', 'joined')
+        .order('joined_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (membershipError) throw new Error(parseDbError(membershipError));
+
+      if (!joinedMembership?.room_id) {
+        clearRoomState();
+        return;
+      }
+
+      const roomId = joinedMembership.room_id as string;
+      await loadRoomSnapshot(roomId);
+      subscribeToRoom(roomId);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to load battle room';
+      setError(message);
+      clearRoomState();
+    } finally {
+      setLoadingRoom(false);
+    }
+  }, [clearRoomState, loadRoomSnapshot, subscribeToRoom, userId]);
+
+  useEffect(() => {
+    void bootstrapRoom();
+
+    return () => {
+      if (refreshTimeoutRef.current != null) {
+        window.clearTimeout(refreshTimeoutRef.current);
+        refreshTimeoutRef.current = null;
+      }
+      if (roomSubRef.current) {
+        void supabase.removeChannel(roomSubRef.current);
+        roomSubRef.current = null;
+      }
     };
-    await connectToRoom(key, true, initialState);
-  };
+  }, [bootstrapRoom]);
 
-  const handleJoinRoom = async () => {
-    const normalized = normalizeRoomKey(joinKeyInput);
-    if (normalized.length !== ROOM_KEY_LENGTH) {
+  useEffect(() => {
+    if (!room?.id) return;
+    subscribeToRoom(room.id);
+  }, [room?.id, subscribeToRoom]);
+
+  const createRoom = useCallback(async () => {
+    setJoining(true);
+    setError(null);
+    setInfo(null);
+
+    try {
+      let createdRoom: BattleRoomRow | null = null;
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        const generatedKey = generateRoomKey();
+        const { data, error: createError } = await supabase
+          .from('battle_rooms')
+          .insert({
+            room_key: generatedKey,
+            host_id: userId,
+            created_by: userId,
+            status: 'lobby',
+            bet_coins: clampBet(Math.min(10, availableCoins), availableCoins),
+            timer_seconds: DEFAULT_TIMER_SECONDS,
+            selected_game_type: null,
+            max_players: DEFAULT_MAX_PLAYERS,
+          })
+          .select('*')
+          .single();
+
+        if (!createError) {
+          createdRoom = data as BattleRoomRow;
+          break;
+        }
+
+        if (createError.code !== '23505') {
+          throw new Error(parseDbError(createError));
+        }
+      }
+
+      if (!createdRoom) {
+        throw new Error('Could not generate a unique room key.');
+      }
+
+      const { error: joinError } = await supabase
+        .from('battle_room_members')
+        .upsert({
+          room_id: createdRoom.id,
+          user_id: userId,
+          role: 'host',
+          status: 'joined',
+          left_at: null,
+        }, { onConflict: 'room_id,user_id' });
+
+      if (joinError) throw new Error(parseDbError(joinError));
+
+      setRoomKeyInput(createdRoom.room_key);
+      setRoom(createdRoom);
+      await loadRoomSnapshot(createdRoom.id);
+      subscribeToRoom(createdRoom.id);
+      setInfo('Room created. Share key with friends.');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to create room';
+      setError(message);
+    } finally {
+      setJoining(false);
+    }
+  }, [availableCoins, loadRoomSnapshot, subscribeToRoom, userId]);
+
+  const joinRoom = useCallback(async () => {
+    const key = normalizeRoomKey(roomKeyInput);
+    if (key.length !== ROOM_KEY_LENGTH) {
       setError(`Enter a ${ROOM_KEY_LENGTH}-character room key.`);
       return;
     }
-    await connectToRoom(normalized, false, null);
-  };
+
+    setJoining(true);
+    setError(null);
+    setInfo(null);
+
+    try {
+      const { data: roomRow, error: roomError } = await supabase
+        .from('battle_rooms')
+        .select('*')
+        .eq('room_key', key)
+        .maybeSingle();
+
+      if (roomError) throw new Error(parseDbError(roomError));
+      if (!roomRow) throw new Error('Room not found.');
+
+      const typedRoom = roomRow as BattleRoomRow;
+      if (typedRoom.status === 'closed') throw new Error('Room is closed.');
+
+      const { data: myMembership, error: membershipError } = await supabase
+        .from('battle_room_members')
+        .select('*')
+        .eq('room_id', typedRoom.id)
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (membershipError) throw new Error(parseDbError(membershipError));
+
+      if ((myMembership?.status as BattleMemberStatus | undefined) === 'kicked') {
+        throw new Error('You were kicked from this room and cannot rejoin.');
+      }
+
+      const { data: joinedRows, error: joinedError } = await supabase
+        .from('battle_room_members')
+        .select('user_id')
+        .eq('room_id', typedRoom.id)
+        .eq('status', 'joined');
+
+      if (joinedError) throw new Error(parseDbError(joinedError));
+
+      const joinedCount = joinedRows?.length ?? 0;
+      const alreadyJoined = (myMembership?.status as BattleMemberStatus | undefined) === 'joined';
+
+      if (!alreadyJoined && joinedCount >= typedRoom.max_players) {
+        throw new Error(`Room is full (${typedRoom.max_players} players max).`);
+      }
+
+      const role: BattleMemberRole = typedRoom.host_id === userId ? 'host' : 'player';
+      const { error: upsertError } = await supabase
+        .from('battle_room_members')
+        .upsert({
+          room_id: typedRoom.id,
+          user_id: userId,
+          role,
+          status: 'joined',
+          left_at: null,
+        }, { onConflict: 'room_id,user_id' });
+
+      if (upsertError) throw new Error(parseDbError(upsertError));
+
+      await loadRoomSnapshot(typedRoom.id);
+      subscribeToRoom(typedRoom.id);
+      setInfo('Joined room. Waiting for host.');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to join room';
+      setError(message);
+    } finally {
+      setJoining(false);
+    }
+  }, [loadRoomSnapshot, roomKeyInput, subscribeToRoom, userId]);
+
+  const leaveRoom = useCallback(async () => {
+    if (!room) return;
+    setWorking(true);
+    setError(null);
+
+    try {
+      const leavingHost = room.host_id === userId;
+
+      const { error: leaveMembershipError } = await supabase
+        .from('battle_room_members')
+        .update({ status: 'left', left_at: new Date().toISOString(), role: 'player' })
+        .eq('room_id', room.id)
+        .eq('user_id', userId);
+      if (leaveMembershipError) throw new Error(parseDbError(leaveMembershipError));
+
+      if (leavingHost) {
+        const { data: nextHostRows, error: nextHostError } = await supabase
+          .from('battle_room_members')
+          .select('user_id')
+          .eq('room_id', room.id)
+          .eq('status', 'joined')
+          .order('joined_at', { ascending: true })
+          .limit(1);
+
+        if (nextHostError) throw new Error(parseDbError(nextHostError));
+
+        const nextHost = nextHostRows?.[0]?.user_id as string | undefined;
+        if (nextHost) {
+          const { error: resetRolesError } = await supabase
+            .from('battle_room_members')
+            .update({ role: 'player' })
+            .eq('room_id', room.id);
+          if (resetRolesError) throw new Error(parseDbError(resetRolesError));
+
+          const { error: assignHostRoleError } = await supabase
+            .from('battle_room_members')
+            .update({ role: 'host' })
+            .eq('room_id', room.id)
+            .eq('user_id', nextHost);
+          if (assignHostRoleError) throw new Error(parseDbError(assignHostRoleError));
+
+          const { error: hostUpdateError } = await supabase
+            .from('battle_rooms')
+            .update({ host_id: nextHost })
+            .eq('id', room.id);
+          if (hostUpdateError) throw new Error(parseDbError(hostUpdateError));
+        } else {
+          const { error: closeRoomError } = await supabase
+            .from('battle_rooms')
+            .update({ status: 'closed' })
+            .eq('id', room.id);
+          if (closeRoomError) throw new Error(parseDbError(closeRoomError));
+        }
+      }
+
+      clearRoomState();
+      setInfo('You left the room.');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to leave room';
+      setError(message);
+    } finally {
+      setWorking(false);
+    }
+  }, [clearRoomState, room, userId]);
+
+  const kickPlayer = useCallback(async (targetUserId: string) => {
+    if (!room || !isHost || targetUserId === userId) return;
+
+    setWorking(true);
+    setError(null);
+    try {
+      const { error: kickError } = await supabase
+        .from('battle_room_members')
+        .update({ status: 'kicked', left_at: new Date().toISOString(), role: 'player' })
+        .eq('room_id', room.id)
+        .eq('user_id', targetUserId);
+
+      if (kickError) throw new Error(parseDbError(kickError));
+      setInfo('Player removed from room.');
+      await refreshRoom(room.id);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to kick player';
+      setError(message);
+    } finally {
+      setWorking(false);
+    }
+  }, [isHost, refreshRoom, room, userId]);
+
+  const updateRoomSetup = useCallback(async (patch: Partial<BattleRoomRow>) => {
+    if (!room || !isHost) return;
+    setWorking(true);
+    setError(null);
+    try {
+      const { error: updateError } = await supabase
+        .from('battle_rooms')
+        .update({
+          bet_coins: patch.bet_coins ?? room.bet_coins,
+          timer_seconds: patch.timer_seconds ?? room.timer_seconds,
+          selected_game_type: patch.selected_game_type ?? room.selected_game_type,
+          status: patch.status ?? room.status,
+        })
+        .eq('id', room.id);
+
+      if (updateError) throw new Error(parseDbError(updateError));
+      await refreshRoom(room.id);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to update room';
+      setError(message);
+    } finally {
+      setWorking(false);
+    }
+  }, [isHost, refreshRoom, room]);
 
   const handleCopyRoomKey = async () => {
-    if (!roomKey) return;
+    if (!room?.room_key) return;
     try {
-      await navigator.clipboard.writeText(roomKey);
+      await navigator.clipboard.writeText(room.room_key);
       setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
+      window.setTimeout(() => setCopied(false), 1200);
     } catch {
       setError('Could not copy key. Copy manually.');
     }
   };
 
-  const handleStart = () => {
-    if (!canStart) return;
-    setHostRoomState({
-      phase: 'game_select',
-      selectedGameType: null,
-    });
-    setInfo('Pick a game mode. Gameplay logic comes next.');
-  };
+  if (loadingRoom) {
+    return (
+      <div className="card text-center py-8">
+        <p className="text-doom-muted text-sm font-mono animate-pulse">Loading battle room...</p>
+      </div>
+    );
+  }
 
-  const handleBetChange = (value: number) => {
-    setHostRoomState({ betCoins: clampBet(value, availableCoins) });
-  };
-
-  const handleTimerChange = (value: number) => {
-    setHostRoomState({ timerSeconds: value });
-  };
-
-  const handleGameSelect = (gameType: GameTypeKey) => {
-    setHostRoomState({ selectedGameType: gameType });
-  };
-
-  const showSetup = !roomKey;
+  const showSetup = !room;
 
   return (
     <div className="flex flex-col gap-4">
@@ -424,11 +633,11 @@ export default function Battle({
           <div className="card">
             <p className="text-neon-green text-xs font-mono uppercase tracking-wider mb-2">Create battle room</p>
             <p className="text-doom-muted text-xs mb-3">
-              Host creates a room key, friends join, then host starts and picks the game type.
+              Host creates a key, players join, host starts, then picks game mode.
             </p>
             <button
               onClick={() => {
-                void handleCreateRoom();
+                void createRoom();
               }}
               className="btn-primary w-full text-sm"
               disabled={joining}
@@ -442,15 +651,15 @@ export default function Battle({
             <div className="flex gap-2">
               <input
                 type="text"
-                value={joinKeyInput}
-                onChange={(event) => setJoinKeyInput(normalizeRoomKey(event.target.value))}
+                value={roomKeyInput}
+                onChange={(event) => setRoomKeyInput(normalizeRoomKey(event.target.value))}
                 placeholder="Room key"
                 maxLength={ROOM_KEY_LENGTH}
                 className="flex-1 bg-doom-surface border border-doom-border rounded-md px-3 py-2 text-sm tracking-[0.24em] uppercase focus:outline-none focus:border-neon-green/50"
               />
               <button
                 onClick={() => {
-                  void handleJoinRoom();
+                  void joinRoom();
                 }}
                 className="btn-primary text-xs px-3 disabled:opacity-50"
                 disabled={joining}
@@ -466,17 +675,15 @@ export default function Battle({
             <div className="flex items-center justify-between gap-2">
               <div>
                 <p className="text-neon-green text-xs font-mono uppercase tracking-wider">
-                  Room {roomKey}
+                  Room {room.room_key}
                 </p>
                 <p className="text-doom-muted text-xs">
-                  {isHost ? 'You are host' : 'You joined as player'} • {players.length}/{MAX_PLAYERS} players • {statusText}
+                  {isHost ? 'You are host' : 'You are player'} • {rankedPlayers.length}/{maxPlayers} players
                 </p>
               </div>
-              <div className="flex gap-2">
+              <div className="flex items-center gap-2">
                 <button
-                  onClick={() => {
-                    void handleCopyRoomKey();
-                  }}
+                  onClick={handleCopyRoomKey}
                   className="px-2 py-1 text-[11px] rounded-md border border-doom-border text-doom-muted hover:text-white hover:border-neon-green/40"
                 >
                   {copied ? 'Copied' : 'Copy key'}
@@ -485,7 +692,8 @@ export default function Battle({
                   onClick={() => {
                     void leaveRoom();
                   }}
-                  className="btn-danger text-[11px] px-2 py-1"
+                  className="btn-danger text-[11px] px-2 py-1 disabled:opacity-60"
+                  disabled={working}
                 >
                   Leave
                 </button>
@@ -495,20 +703,20 @@ export default function Battle({
 
           <div className="card">
             <div className="flex items-center justify-between mb-2">
-              <p className="text-doom-muted text-xs font-mono uppercase tracking-wider">
-                Lobby players
-              </p>
+              <p className="text-doom-muted text-xs font-mono uppercase tracking-wider">Lobby players</p>
               <p className="text-doom-muted text-[11px]">
-                {roomIsFull ? 'Room full' : `${MAX_PLAYERS - players.length} open slot${MAX_PLAYERS - players.length === 1 ? '' : 's'}`}
+                {roomIsFull ? 'Room full' : `${maxPlayers - rankedPlayers.length} slots open`}
               </p>
             </div>
             <div className="space-y-2">
-              {players.map((player) => {
-                const isRoomHost = roomState?.hostId === player.userId;
+              {rankedPlayers.map((player) => {
                 const isMe = player.userId === userId;
-
+                const playerIsHost = player.userId === room.host_id;
                 return (
-                  <div key={player.userId} className="flex items-center justify-between rounded-lg border border-doom-border bg-doom-bg/40 px-2.5 py-2">
+                  <div
+                    key={player.userId}
+                    className="flex items-center justify-between rounded-lg border border-doom-border bg-doom-bg/40 px-2.5 py-2"
+                  >
                     <div className="flex items-center gap-2 min-w-0">
                       <UserAvatar
                         avatarUrl={player.avatarUrl}
@@ -522,7 +730,7 @@ export default function Battle({
                       </div>
                     </div>
                     <div className="flex items-center gap-1">
-                      {isRoomHost && (
+                      {playerIsHost && (
                         <span className="text-[10px] px-1.5 py-0.5 rounded border border-neon-green/40 text-neon-green font-mono">
                           HOST
                         </span>
@@ -532,27 +740,27 @@ export default function Battle({
                           YOU
                         </span>
                       )}
+                      {isHost && !isMe && (
+                        <button
+                          onClick={() => {
+                            void kickPlayer(player.userId);
+                          }}
+                          className="text-[10px] px-1.5 py-0.5 rounded border border-neon-pink/40 text-neon-pink hover:bg-neon-pink/15 transition-colors"
+                          disabled={working}
+                        >
+                          Kick
+                        </button>
+                      )}
                     </div>
                   </div>
                 );
               })}
-
-              {players.length === 0 && (
-                <p className="text-doom-muted text-xs">Waiting for players to join...</p>
-              )}
             </div>
           </div>
 
-          {!hostStillPresent && (
-            <div className="card border-neon-pink/35 bg-neon-pink/10 text-neon-pink text-xs">
-              Host left the room. Recreate a room to continue.
-            </div>
-          )}
-
-          {roomState?.phase === 'lobby' && (
+          {room.status === 'lobby' && (
             <div className="card">
               <p className="text-doom-muted text-xs font-mono uppercase tracking-wider mb-2">Round setup</p>
-
               <div className="grid grid-cols-2 gap-2 mb-3">
                 <label className="block">
                   <span className="text-[11px] text-doom-muted">Bet coins</span>
@@ -560,18 +768,23 @@ export default function Battle({
                     type="number"
                     min={0}
                     max={Math.max(0, Math.floor(availableCoins))}
-                    value={roomState.betCoins}
-                    disabled={!isHost}
-                    onChange={(event) => handleBetChange(Number(event.target.value))}
+                    value={room.bet_coins}
+                    disabled={!isHost || working}
+                    onChange={(event) => {
+                      const bet = clampBet(Number(event.target.value), availableCoins);
+                      void updateRoomSetup({ bet_coins: bet });
+                    }}
                     className="mt-1 w-full bg-doom-surface border border-doom-border rounded-md px-2 py-1.5 text-sm disabled:opacity-60"
                   />
                 </label>
                 <label className="block">
                   <span className="text-[11px] text-doom-muted">Round timer</span>
                   <select
-                    value={roomState.timerSeconds}
-                    disabled={!isHost}
-                    onChange={(event) => handleTimerChange(Number(event.target.value))}
+                    value={room.timer_seconds}
+                    disabled={!isHost || working}
+                    onChange={(event) => {
+                      void updateRoomSetup({ timer_seconds: Number(event.target.value) });
+                    }}
                     className="mt-1 w-full bg-doom-surface border border-doom-border rounded-md px-2 py-1.5 text-sm disabled:opacity-60"
                   >
                     {TIMER_OPTIONS_SECONDS.map((seconds) => (
@@ -585,40 +798,44 @@ export default function Battle({
 
               {isHost ? (
                 <button
-                  onClick={handleStart}
-                  disabled={!canStart}
+                  onClick={() => {
+                    void updateRoomSetup({ status: 'game_select', selected_game_type: null });
+                  }}
+                  disabled={!canStart || working}
                   className="btn-primary w-full text-sm disabled:opacity-50"
                 >
                   {canStart ? 'Start Battle' : 'Need at least 2 players'}
                 </button>
               ) : (
-                <p className="text-doom-muted text-xs">Waiting for host to start the battle.</p>
+                <p className="text-doom-muted text-xs">Waiting for host to start.</p>
               )}
             </div>
           )}
 
-          {roomState?.phase === 'game_select' && (
+          {room.status === 'game_select' && (
             <div className="card">
-              <p className="text-neon-green text-xs font-mono uppercase tracking-wider mb-1">
-                Game select
-              </p>
+              <p className="text-neon-green text-xs font-mono uppercase tracking-wider mb-1">Game select</p>
               <p className="text-doom-muted text-xs mb-3">
-                Pot: <span className="text-white">{roomState.betCoins * players.length} coins</span> • Timer: <span className="text-white">{formatTimer(roomState.timerSeconds)}</span>
+                Pot: <span className="text-white">{room.bet_coins * rankedPlayers.length} coins</span> • Timer:{' '}
+                <span className="text-white">{formatTimer(room.timer_seconds)}</span>
               </p>
 
               {isHost ? (
                 <div className="grid grid-cols-1 gap-2">
                   {GAME_OPTIONS.map((option) => {
-                    const selected = roomState.selectedGameType === option.id;
+                    const selected = room.selected_game_type === option.id;
                     return (
                       <button
                         key={option.id}
-                        onClick={() => handleGameSelect(option.id)}
+                        onClick={() => {
+                          void updateRoomSetup({ selected_game_type: option.id });
+                        }}
                         className={`text-left rounded-lg border px-3 py-2 transition-colors ${
                           selected
                             ? 'border-neon-green/60 bg-neon-green/10'
                             : 'border-doom-border bg-doom-surface hover:border-neon-green/30'
                         }`}
+                        disabled={working}
                       >
                         <p className="text-sm text-white">{option.title}</p>
                         <p className="text-[11px] text-doom-muted">{option.subtitle} • {option.details}</p>
@@ -627,18 +844,16 @@ export default function Battle({
                   })}
                 </div>
               ) : (
-                <p className="text-doom-muted text-xs">
-                  Waiting for host to choose the game type...
-                </p>
+                <p className="text-doom-muted text-xs">Waiting for host to choose game type...</p>
               )}
 
-              {roomState.selectedGameType && (
+              {room.selected_game_type && (
                 <div className="mt-3 rounded-lg border border-neon-green/35 bg-neon-green/10 px-3 py-2">
                   <p className="text-neon-green text-xs font-mono uppercase tracking-wider">
-                    Selected: {getGameLabel(roomState.selectedGameType)}
+                    Selected: {getGameLabel(room.selected_game_type)}
                   </p>
                   <p className="text-[11px] text-doom-muted mt-1">
-                    Battle mechanics for this mode will be wired next.
+                    Gameplay for this mode will be wired next.
                   </p>
                 </div>
               )}
