@@ -1,22 +1,15 @@
 import { useState } from 'react';
-import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './hooks/useAuth';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
 import SetUsername from './pages/SetUsername';
-
-function AuthenticatedApp() {
-  return (
-    <div className="flex flex-col items-center justify-center h-full gap-4">
-      <p className="text-6xl">💀</p>
-      <p className="text-doom-muted font-mono text-sm">You're in. Building dashboard...</p>
-    </div>
-  );
-}
+import Dashboard from './pages/Dashboard';
+import BottomNav from './components/BottomNav';
 
 function App() {
   const { user, profile, loading, signIn, signUp, signOut, updateUsername } = useAuth();
   const [authView, setAuthView] = useState<'login' | 'signup'>('login');
+  const [activePage, setActivePage] = useState('home');
 
   if (loading) {
     return (
@@ -65,35 +58,50 @@ function App() {
     );
   }
 
+  // Render the active page
+  function renderPage() {
+    switch (activePage) {
+      case 'home':
+        return <Dashboard />;
+      case 'board':
+        return <div className="text-center text-doom-muted py-8 font-mono text-sm">Leaderboard coming soon...</div>;
+      case 'pals':
+        return <div className="text-center text-doom-muted py-8 font-mono text-sm">Friends coming soon...</div>;
+      case 'battle':
+        return <div className="text-center text-doom-muted py-8 font-mono text-sm">Battles coming in v3...</div>;
+      case 'chat':
+        return <div className="text-center text-doom-muted py-8 font-mono text-sm">AI Chat coming in v2...</div>;
+      default:
+        return <Dashboard />;
+    }
+  }
+
   // Fully authenticated
   return (
-    <HashRouter>
-      <div className="w-[400px] h-[600px] bg-doom-bg text-white flex flex-col">
-        <header className="flex items-center justify-between px-4 py-3 border-b border-doom-border">
-          <h1 className="text-lg font-bold font-mono neon-text-green">
-            DoomScroller
-          </h1>
-          <div className="flex items-center gap-2">
-            <span className="text-doom-muted text-xs font-mono">
-              @{profile?.username}
-            </span>
-            <button
-              onClick={signOut}
-              className="text-doom-muted hover:text-neon-pink text-xs transition-colors"
-            >
-              ✕
-            </button>
-          </div>
-        </header>
+    <div className="w-[400px] h-[600px] bg-doom-bg text-white flex flex-col">
+      <header className="flex items-center justify-between px-4 py-3 border-b border-doom-border">
+        <h1 className="text-lg font-bold font-mono neon-text-green">
+          DoomScroller
+        </h1>
+        <div className="flex items-center gap-2">
+          <span className="text-doom-muted text-xs font-mono">
+            @{profile?.username}
+          </span>
+          <button
+            onClick={signOut}
+            className="text-doom-muted hover:text-neon-pink text-xs transition-colors"
+          >
+            ✕
+          </button>
+        </div>
+      </header>
 
-        <main className="flex-1 overflow-y-auto p-4">
-          <Routes>
-            <Route path="/" element={<AuthenticatedApp />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </main>
-      </div>
-    </HashRouter>
+      <main className="flex-1 overflow-y-auto p-4">
+        {renderPage()}
+      </main>
+
+      <BottomNav active={activePage} onNavigate={setActivePage} />
+    </div>
   );
 }
 
