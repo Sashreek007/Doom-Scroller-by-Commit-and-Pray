@@ -6,6 +6,7 @@ import { writeProfileToCache } from '@/shared/profile-cache';
 import { metersToCoins } from '@/shared/coins';
 import type { AchievementSyncedMessage } from '@/shared/messages';
 import GoldCoinIcon from '../components/GoldCoinIcon';
+import AchievementBadgeArt from '../components/AchievementBadgeArt';
 
 const CACHE_KEY_PROFILE = 'cached_profile_';
 const CACHE_KEY_ACHIEVEMENTS = 'cached_achievements_';
@@ -32,6 +33,16 @@ function getRoastLine(meta: Achievement['meta']): string | null {
   if (!meta || typeof meta !== 'object') return null;
   const value = (meta as Record<string, unknown>).roast_line;
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function formatAchievementDate(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return 'Unknown date';
+  return date.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
 }
 
 function isAchievementSyncedMessage(value: unknown): value is AchievementSyncedMessage {
@@ -67,6 +78,7 @@ export default function Profile({
   const [avatarMessage, setAvatarMessage] = useState('');
   const [avatarMessageType, setAvatarMessageType] = useState<'success' | 'error'>('success');
   const [avatarBroken, setAvatarBroken] = useState(false);
+  const [selectedAchievement, setSelectedAchievement] = useState<Achievement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const avatarMessageTimerRef = useRef<number | null>(null);
 
@@ -394,21 +406,27 @@ export default function Profile({
           Achievements ({achievements.length})
         </p>
         {achievements.length > 0 ? (
-          <div className="grid grid-cols-4 gap-2">
+          <div className="grid grid-cols-3 gap-2">
             {achievements.map((a) => (
-              <div
+              <button
                 key={a.id}
-                className={`card flex flex-col items-center gap-1 p-2 ${getRarityClasses(getAchievementRarity(a.rarity))}`}
+                type="button"
+                onClick={() => setSelectedAchievement(a)}
+                className={`card flex flex-col items-center gap-1.5 p-2 text-left transition-transform hover:-translate-y-0.5 ${getRarityClasses(getAchievementRarity(a.rarity))}`}
                 title={`${a.title}: ${a.description}${getRoastLine(a.meta) ? ` — ${getRoastLine(a.meta)}` : ''}`}
               >
-                <span className="text-xl">{a.icon}</span>
-                <span className="text-[9px] text-doom-muted font-mono text-center leading-tight truncate w-full">
+                <AchievementBadgeArt
+                  achievement={a}
+                  rarity={getAchievementRarity(a.rarity)}
+                  size="sm"
+                />
+                <span className="text-[10px] text-doom-muted font-mono text-center leading-tight min-h-[2.1rem] w-full">
                   {a.title}
                 </span>
                 <span className="text-[8px] uppercase tracking-wider text-doom-muted/80 font-mono">
                   {getAchievementRarity(a.rarity)}
                 </span>
-              </div>
+              </button>
             ))}
           </div>
         ) : (
@@ -421,6 +439,70 @@ export default function Profile({
           </div>
         )}
       </div>
+
+      {selectedAchievement && (
+        <div
+          className="fixed inset-0 z-50 bg-black/70 backdrop-blur-[1px] flex items-center justify-center px-4"
+          onClick={() => setSelectedAchievement(null)}
+        >
+          <div
+            className={`w-full max-w-[320px] rounded-xl border p-4 bg-[#080b11] shadow-[0_18px_50px_rgba(0,0,0,0.55)] ${getRarityClasses(getAchievementRarity(selectedAchievement.rarity))}`}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 mb-3">
+              <div className="flex items-center gap-3">
+                <AchievementBadgeArt
+                  achievement={selectedAchievement}
+                  rarity={getAchievementRarity(selectedAchievement.rarity)}
+                  size="lg"
+                />
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider font-mono text-doom-muted">
+                    Achievement
+                  </p>
+                  <p className="text-[10px] uppercase tracking-wider font-mono text-white/80">
+                    {getAchievementRarity(selectedAchievement.rarity)}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedAchievement(null)}
+                className="text-doom-muted hover:text-white text-xl leading-none"
+                aria-label="Close achievement details"
+              >
+                ×
+              </button>
+            </div>
+
+            <h3 className="text-sm font-semibold font-mono text-white mb-2 leading-snug">
+              {selectedAchievement.title}
+            </h3>
+            <p className="text-xs text-doom-muted leading-relaxed mb-3">
+              {selectedAchievement.description}
+            </p>
+
+            {getRoastLine(selectedAchievement.meta) && (
+              <p className="text-[11px] text-neon-green/90 italic mb-3">
+                "{getRoastLine(selectedAchievement.meta)}"
+              </p>
+            )}
+
+            <div className="grid grid-cols-2 gap-2 text-[10px] font-mono text-doom-muted">
+              <div className="bg-doom-surface border border-doom-border rounded-md px-2 py-1.5">
+                Unlocked
+                <div className="text-white mt-0.5">{formatAchievementDate(selectedAchievement.earned_at)}</div>
+              </div>
+              <div className="bg-doom-surface border border-doom-border rounded-md px-2 py-1.5">
+                Trigger
+                <div className="text-white mt-0.5 break-all leading-snug">
+                  {selectedAchievement.trigger_type}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
