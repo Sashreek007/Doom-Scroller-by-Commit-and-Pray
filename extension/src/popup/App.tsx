@@ -16,6 +16,25 @@ import { metersToCoins } from '@/shared/coins';
 import GoldCoinIcon from './components/GoldCoinIcon';
 import { useScrollStats } from './hooks/useScrollStats';
 
+const ACTIVE_PAGE_STORAGE_PREFIX = 'doom_popup_active_page_';
+const RESTORABLE_PAGES = new Set([
+  'home',
+  'board',
+  'pals',
+  'battle',
+  'chat',
+  'profile',
+  'settings',
+]);
+
+function getActivePageStorageKey(userId: string): string {
+  return `${ACTIVE_PAGE_STORAGE_PREFIX}${userId}`;
+}
+
+function isRestorablePage(value: string): boolean {
+  return RESTORABLE_PAGES.has(value);
+}
+
 function getProfileInitials(displayName: string | null | undefined, username: string): string {
   const source = (displayName?.trim() || username).replace(/^@+/, '').trim();
   if (!source) return 'U';
@@ -48,6 +67,7 @@ function App() {
   const [authView, setAuthView] = useState<'login' | 'signup'>('login');
   const [activePage, setActivePage] = useState('home');
   const [viewingProfileId, setViewingProfileId] = useState<string | null>(null);
+  const [activePageRestored, setActivePageRestored] = useState(false);
   const { count: pendingRequestsCount, refresh: refreshPendingRequests } = usePendingFriendRequestsCount(user?.id ?? null);
   const [pendingRequestsLocal, setPendingRequestsLocal] = useState(0);
   const [headerAvatarBroken, setHeaderAvatarBroken] = useState(false);
@@ -58,11 +78,45 @@ function App() {
   }, [pendingRequestsCount]);
 
   useEffect(() => {
-    // Prevent stale page state (for example, staying on Settings) across logout/login user changes.
-    setActivePage('home');
     setViewingProfileId(null);
-    if (!user) setAuthView('login');
+    const userId = user?.id;
+    if (!userId) {
+      setActivePage('home');
+      setActivePageRestored(false);
+      setAuthView('login');
+      return;
+    }
+
+    let cancelled = false;
+    setActivePageRestored(false);
+
+    void (async () => {
+      try {
+        const key = getActivePageStorageKey(userId);
+        const cached = await chrome.storage.local.get(key);
+        if (cancelled) return;
+        const savedPage = typeof cached[key] === 'string' ? cached[key] as string : 'home';
+        setActivePage(isRestorablePage(savedPage) ? savedPage : 'home');
+      } catch {
+        if (!cancelled) setActivePage('home');
+      } finally {
+        if (!cancelled) setActivePageRestored(true);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [user?.id]);
+
+  useEffect(() => {
+    const userId = user?.id;
+    if (!userId || !activePageRestored) return;
+    if (!isRestorablePage(activePage)) return;
+
+    const key = getActivePageStorageKey(userId);
+    void chrome.storage.local.set({ [key]: activePage });
+  }, [activePage, activePageRestored, user?.id]);
 
   useEffect(() => {
     setHeaderAvatarBroken(false);

@@ -55,6 +55,7 @@ if (!config) {
   let shownBattleResultKey: string | null = null;
   let battleTimerSyncInFlight = false;
   let battleTimerLastSyncAt = 0;
+  let battleTimerInactiveStreak = 0;
 
   const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -204,10 +205,19 @@ if (!config) {
 
   function applyBattleTimerResponse(response: GetBattleTimerResponse | undefined) {
     if (!response?.active) {
+      battleTimerInactiveStreak += 1;
+      if (
+        battleTimerState
+        && Date.now() < (battleTimerState.roundEndMs + 6000)
+        && battleTimerInactiveStreak < 5
+      ) {
+        return;
+      }
       clearBattleTimerState();
       return;
     }
 
+    battleTimerInactiveStreak = 0;
     const roundStartMs = Date.parse(response.roundStartedAt ?? '');
     const roundEndMs = Date.parse(response.roundEndsAt ?? '');
     if (!Number.isFinite(roundStartMs) || !Number.isFinite(roundEndMs) || roundEndMs <= roundStartMs) {

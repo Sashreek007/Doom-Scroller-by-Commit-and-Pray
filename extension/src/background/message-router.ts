@@ -37,6 +37,24 @@ async function getActiveUserId(): Promise<string | null> {
   return session?.user?.id ?? null;
 }
 
+async function tryAutoFinalizeBattleRound(roomId: string): Promise<void> {
+  const supabase = getSupabase();
+  const { error } = await supabase.rpc('finalize_battle_round', {
+    p_room_id: roomId,
+  });
+
+  if (!error) return;
+
+  const message = (error.message ?? '').toLowerCase();
+  if (
+    message.includes('round is not active')
+    || message.includes('round timer has not completed')
+    || message.includes('room not found')
+  ) {
+    return;
+  }
+}
+
 function parseBattleRoundResultSummary(
   row: {
     id: unknown;
@@ -92,13 +110,34 @@ async function fetchBattleTimerFromDb(userId: string): Promise<GetBattleTimerRes
     .filter((value): value is string => Boolean(value));
   if (roomIds.length === 0) return { active: false, viewerUserId: userId };
 
-  const { data: rooms, error: roomError } = await supabase
+  const selectClause = 'id, room_key, host_id, status, selected_game_type, round_started_at, round_ends_at, timer_seconds, round_result, updated_at';
+  const { data: roomsRaw, error: roomError } = await supabase
     .from('battle_rooms')
-    .select('id, room_key, status, selected_game_type, round_started_at, round_ends_at, timer_seconds, round_result, updated_at')
+    .select(selectClause)
     .in('id', roomIds)
     .order('updated_at', { ascending: false });
 
-  if (roomError || !rooms || rooms.length === 0) return { active: false, viewerUserId: userId };
+  if (roomError || !roomsRaw || roomsRaw.length === 0) return { active: false, viewerUserId: userId };
+
+  let rooms = roomsRaw;
+  const nowMs = Date.now();
+  const dueActiveRoom = rooms.find((room) => {
+    if (room.status !== 'active' || !room.round_ends_at) return false;
+    const endMs = Date.parse(room.round_ends_at as string);
+    return Number.isFinite(endMs) && endMs <= nowMs;
+  });
+
+  if (dueActiveRoom?.id) {
+    await tryAutoFinalizeBattleRound(dueActiveRoom.id as string);
+    const { data: refreshedRooms } = await supabase
+      .from('battle_rooms')
+      .select(selectClause)
+      .in('id', roomIds)
+      .order('updated_at', { ascending: false });
+    if (refreshedRooms?.length) {
+      rooms = refreshedRooms;
+    }
+  }
 
   let latestRoundResult: BattleRoundResultSummary | null = null;
   for (const room of rooms) {
@@ -109,7 +148,6 @@ async function fetchBattleTimerFromDb(userId: string): Promise<GetBattleTimerRes
     }
   }
 
-  const nowMs = Date.now();
   const activeRoom = rooms.find((room) => {
     if (room.status !== 'active' || !room.round_started_at || !room.round_ends_at) return false;
     const endMs = Date.parse(room.round_ends_at as string);
