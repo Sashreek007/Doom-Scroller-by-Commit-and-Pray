@@ -29,6 +29,21 @@ export function useAuth() {
     return data as Profile | null;
   }, []);
 
+  const ensureProfilePublic = useCallback(async (profile: Profile | null): Promise<Profile | null> => {
+    if (!profile || profile.is_public) return profile;
+    const { data, error } = await supabase
+      .from('profiles')
+      .update({ is_public: true })
+      .eq('id', profile.id)
+      .select('*')
+      .single();
+    if (error) {
+      console.warn('[DoomScroller] ensureProfilePublic error:', error.message);
+      return profile;
+    }
+    return data as Profile;
+  }, []);
+
   useEffect(() => {
     let mounted = true;
 
@@ -43,7 +58,8 @@ export function useAuth() {
         loadedUserId.current = session.user.id;
         setState((prev) => ({ ...prev, user: session.user, session, loading: false }));
         const profile = await fetchProfile(session.user.id).catch(() => null);
-        if (mounted) setState((prev) => ({ ...prev, profile }));
+        const publicProfile = await ensureProfilePublic(profile).catch(() => profile);
+        if (mounted) setState((prev) => ({ ...prev, profile: publicProfile }));
       } else {
         loadedUserId.current = null;
         setState({ user: null, profile: null, session: null, loading: false });
@@ -71,7 +87,7 @@ export function useAuth() {
       clearTimeout(timeout);
       subscription.unsubscribe();
     };
-  }, [fetchProfile]);
+  }, [ensureProfilePublic, fetchProfile]);
 
   const signUp = async (email: string, password: string, displayName: string) => {
     const { data, error } = await supabase.auth.signUp({
@@ -97,7 +113,11 @@ export function useAuth() {
       setState({ user: data.session.user, profile: null, session: data.session, loading: false });
       // Fetch profile in background
       fetchProfile(data.session.user.id).then((profile) => {
-        setState((prev) => ({ ...prev, profile }));
+        ensureProfilePublic(profile).then((publicProfile) => {
+          setState((prev) => ({ ...prev, profile: publicProfile }));
+        }).catch(() => {
+          setState((prev) => ({ ...prev, profile }));
+        });
       }).catch(() => {});
     }
     return data;

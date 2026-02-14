@@ -40,13 +40,11 @@ export default function Leaderboard({ userId, onViewProfile }: LeaderboardProps)
   const loadWorldLeaderboard = useCallback(async (): Promise<LeaderboardData> => {
     // Primary source: materialized view with precomputed global rank across DB users.
     try {
-      const { data: viewTop, error: viewTopError } = await withTimeout(async () => (
-        await supabase
-          .from('leaderboard_world')
-          .select('*')
-          .order('rank', { ascending: true })
-          .limit(50)
-      ));
+      const { data: viewTop, error: viewTopError } = await supabase
+        .from('leaderboard_world')
+        .select('*')
+        .order('rank', { ascending: true })
+        .limit(50);
 
       if (!viewTopError && viewTop) {
         const typedTop = (viewTop ?? []) as LeaderboardEntry[];
@@ -60,18 +58,16 @@ export default function Leaderboard({ userId, onViewProfile }: LeaderboardProps)
         }
 
         try {
-          const { data: myRankRow, error: myRankError } = await withTimeout(async () => (
-            await supabase
-              .from('leaderboard_world')
-              .select('*')
-              .eq('user_id', userId)
-              .maybeSingle()
-          ));
+          const { data: myRankRow, error: myRankError } = await supabase
+            .from('leaderboard_world')
+            .select('*')
+            .eq('user_id', userId)
+            .maybeSingle();
 
-          if (!myRankError) {
+          if (!myRankError && myRankRow) {
             return {
               entries: typedTop,
-              myRank: (myRankRow as LeaderboardEntry | null) ?? null,
+              myRank: myRankRow as LeaderboardEntry,
             };
           }
         } catch {
@@ -86,7 +82,6 @@ export default function Leaderboard({ userId, onViewProfile }: LeaderboardProps)
     const { data: topProfiles, error: topProfilesError } = await supabase
       .from('profiles')
       .select('id, username, display_name, avatar_url, total_meters_scrolled')
-      .eq('is_public', true)
       .order('total_meters_scrolled', { ascending: false })
       .limit(50);
 
@@ -104,11 +99,11 @@ export default function Leaderboard({ userId, onViewProfile }: LeaderboardProps)
 
     const { data: meProfile, error: meProfileError } = await supabase
       .from('profiles')
-      .select('id, username, display_name, avatar_url, total_meters_scrolled, is_public')
+      .select('id, username, display_name, avatar_url, total_meters_scrolled')
       .eq('id', userId)
       .single();
 
-    if (meProfileError || !meProfile || !meProfile.is_public) {
+    if (meProfileError || !meProfile) {
       return {
         entries: ranked,
         myRank: null,
@@ -119,7 +114,6 @@ export default function Leaderboard({ userId, onViewProfile }: LeaderboardProps)
     const { count, error: rankCountError } = await supabase
       .from('profiles')
       .select('id', { count: 'exact', head: true })
-      .eq('is_public', true)
       .gt('total_meters_scrolled', myMeters);
 
     if (rankCountError) throw rankCountError;
@@ -169,6 +163,11 @@ export default function Leaderboard({ userId, onViewProfile }: LeaderboardProps)
   useEffect(() => {
     let mounted = true;
     let hasLoadedFromCache = false;
+    const loadingFailSafe = setTimeout(() => {
+      if (!mounted) return;
+      setLoading(false);
+      setError((prev) => prev ?? 'Leaderboard request timed out');
+    }, 8000);
 
     async function loadFromCache() {
       const result = await chrome.storage.local.get(cacheKey);
@@ -202,6 +201,8 @@ export default function Leaderboard({ userId, onViewProfile }: LeaderboardProps)
         setEntries(data.entries);
         setMyRank(data.myRank);
         setLoading(false);
+        setError(null);
+        clearTimeout(loadingFailSafe);
         void saveToCache(data);
       } catch (e) {
         if (!mounted) return;
@@ -211,6 +212,7 @@ export default function Leaderboard({ userId, onViewProfile }: LeaderboardProps)
         }
         setError(e instanceof Error ? e.message : 'Failed to load leaderboard');
         setLoading(false);
+        clearTimeout(loadingFailSafe);
       }
     }
 
@@ -229,14 +231,9 @@ export default function Leaderboard({ userId, onViewProfile }: LeaderboardProps)
     return () => {
       mounted = false;
       clearInterval(interval);
+      clearTimeout(loadingFailSafe);
     };
   }, [cacheKey, loadFriendsLeaderboard, loadWorldLeaderboard, tab]);
-
-  useEffect(() => {
-    if (!error) return;
-    const timeout = setTimeout(() => setError(null), 5000);
-    return () => clearTimeout(timeout);
-  }, [error]);
 
   return (
     <div className="flex flex-col gap-4">
@@ -332,19 +329,6 @@ export default function Leaderboard({ userId, onViewProfile }: LeaderboardProps)
       )}
     </div>
   );
-}
-
-async function withTimeout<T>(run: () => Promise<T>, timeoutMs = 4000): Promise<T> {
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => reject(new Error('Request timed out')), timeoutMs);
-  });
-
-  try {
-    return await Promise.race([run(), timeoutPromise]);
-  } finally {
-    if (timeoutId) clearTimeout(timeoutId);
-  }
 }
 
 function formatMeters(m: number): string {
