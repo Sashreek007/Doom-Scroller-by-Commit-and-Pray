@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAuth } from './hooks/useAuth';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
@@ -23,7 +23,6 @@ const RESTORABLE_PAGES = new Set([
   'pals',
   'battle',
   'chat',
-  'profile',
   'settings',
 ]);
 
@@ -68,6 +67,7 @@ function App() {
   const [activePage, setActivePage] = useState('home');
   const [viewingProfileId, setViewingProfileId] = useState<string | null>(null);
   const [activePageRestored, setActivePageRestored] = useState(false);
+  const sawLoggedOutStateRef = useRef(false);
   const { count: pendingRequestsCount, refresh: refreshPendingRequests } = usePendingFriendRequestsCount(user?.id ?? null);
   const [pendingRequestsLocal, setPendingRequestsLocal] = useState(0);
   const [headerAvatarBroken, setHeaderAvatarBroken] = useState(false);
@@ -78,12 +78,26 @@ function App() {
   }, [pendingRequestsCount]);
 
   useEffect(() => {
+    if (!loading && !user) {
+      sawLoggedOutStateRef.current = true;
+    }
+  }, [loading, user]);
+
+  useEffect(() => {
     setViewingProfileId(null);
     const userId = user?.id;
     if (!userId) {
       setActivePage('home');
       setActivePageRestored(false);
       setAuthView('login');
+      return;
+    }
+
+    if (sawLoggedOutStateRef.current) {
+      // Explicit login in this popup session: always land on Home.
+      setActivePage('home');
+      setActivePageRestored(true);
+      sawLoggedOutStateRef.current = false;
       return;
     }
 
