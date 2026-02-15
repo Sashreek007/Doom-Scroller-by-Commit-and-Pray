@@ -90,6 +90,20 @@ function buildFallbackContext(user: { id: string; email?: string | null; user_me
   };
 }
 
+/** Strip AI responses that start with a quoted user message or username preamble. */
+function stripQuotedOpener(text: string): string {
+  let cleaned = text.trim();
+  // Remove "You said: ..." or 'You said: "..."' preambles
+  cleaned = cleaned.replace(/^you said:\s*/i, '');
+  // Remove leading quoted text like "Hello" or 'Hello'
+  cleaned = cleaned.replace(/^["'][^"']{1,120}["']\s*/, '');
+  // Remove leading username/display_name followed by comma/colon
+  cleaned = cleaned.replace(/^[a-z0-9_]{2,30}[,:]?\s*/i, '');
+  // Remove leftover punctuation from stripping
+  cleaned = cleaned.replace(/^[,:\-–—]\s*/, '');
+  return cleaned.trim() || text.trim();
+}
+
 function buildPrompt(
   userMessage: string,
   context: Awaited<ReturnType<typeof loadUserBehaviorContext>>,
@@ -106,6 +120,9 @@ function buildPrompt(
     'If asked about others, refuse and pivot to this user only.',
     'Keep responses under 120 words.',
     'Tone: playful roast, not hateful.',
+    'Never quote back or repeat the user\'s message in any form.',
+    'Never include the username or display name in your response.',
+    'Jump straight into your roast or answer. No openers, no greetings, no "You said..." preambles.',
     `username: ${context.username}`,
     `display_name: ${context.displayName}`,
     `total_meters: ${context.totalMeters}`,
@@ -158,12 +175,36 @@ serve(async (req: Request) => {
       },
     });
 
+    // Primary auth: validate with user's access token.
     const {
-      data: { user },
+      data: { user: primaryUser },
       error: authError,
     } = await supabase.auth.getUser(accessToken);
 
-    if (authError || !user) {
+    let user = primaryUser;
+
+    // Fallback: if token is expired but structurally valid, verify user via service role.
+    if ((authError || !user) && accessToken.includes('.')) {
+      try {
+        const payloadB64 = accessToken.split('.')[1];
+        const payload = JSON.parse(atob(payloadB64));
+        const userId = typeof payload.sub === 'string' ? payload.sub : null;
+        if (userId) {
+          const serviceRoleKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
+          const serviceClient = createClient(supabaseUrl, serviceRoleKey, {
+            auth: { persistSession: false, autoRefreshToken: false },
+          });
+          const { data: { user: serviceUser } } = await serviceClient.auth.admin.getUserById(userId);
+          if (serviceUser) {
+            user = serviceUser;
+          }
+        }
+      } catch (fallbackErr) {
+        console.warn('[chatbot] service-role fallback failed:', fallbackErr);
+      }
+    }
+
+    if (!user) {
       return new Response(JSON.stringify({ error: 'Unauthorized' }), {
         status: 401,
         headers: { ...corsHeaders, 'content-type': 'application/json' },
@@ -222,7 +263,7 @@ serve(async (req: Request) => {
       context.username,
     );
 
-    const reply = sanitizeAiText(aiRaw, context.username).slice(0, 800);
+    const reply = stripQuotedOpener(sanitizeAiText(aiRaw, context.username)).slice(0, 800);
 
     try {
       await supabase

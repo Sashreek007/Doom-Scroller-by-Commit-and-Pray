@@ -6,11 +6,25 @@ const BATCHES_KEY = 'scrollBatches';
 const INFLIGHT_BATCHES_KEY = 'scrollBatchesInFlight';
 const STATS_REFRESH_INTERVAL_MS = 1000;
 
+function normalizeStats(response: Partial<GetStatsResponse> | null | undefined): GetStatsResponse {
+  return {
+    todayMeters: Number(response?.todayMeters ?? 0),
+    todayBysite: (response?.todayBysite && typeof response.todayBysite === 'object')
+      ? response.todayBysite
+      : {},
+    totalMeters: Number(response?.totalMeters ?? 0),
+    totalBysite: (response?.totalBysite && typeof response.totalBysite === 'object')
+      ? response.totalBysite
+      : {},
+  };
+}
+
 export function useScrollStats() {
   const [stats, setStats] = useState<GetStatsResponse>({
     todayMeters: 0,
     todayBysite: {},
     totalMeters: 0,
+    totalBysite: {},
   });
   const [loading, setLoading] = useState(true);
   const requestSeqRef = useRef(0);
@@ -20,7 +34,7 @@ export function useScrollStats() {
   useEffect(() => {
     chrome.storage.local.get(CACHE_KEY).then((result) => {
       if (result[CACHE_KEY]) {
-        setStats(result[CACHE_KEY]);
+        setStats(normalizeStats(result[CACHE_KEY] as Partial<GetStatsResponse>));
         setLoading(false);
       }
     });
@@ -32,8 +46,9 @@ export function useScrollStats() {
       const response = await chrome.runtime.sendMessage({ type: 'GET_STATS' });
       if (response && requestId >= latestAppliedRef.current) {
         latestAppliedRef.current = requestId;
-        setStats(response as GetStatsResponse);
-        chrome.storage.local.set({ [CACHE_KEY]: response });
+        const normalized = normalizeStats(response as Partial<GetStatsResponse>);
+        setStats(normalized);
+        chrome.storage.local.set({ [CACHE_KEY]: normalized });
       }
     } catch {
       // Extension context might not be ready

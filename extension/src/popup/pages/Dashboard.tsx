@@ -30,6 +30,8 @@ export default function Dashboard({ stats: externalStats, loading: externalLoadi
 
   const sitesWithData = Object.entries(stats.todayBysite)
     .sort(([, a], [, b]) => b - a);
+  const allTimeSitesWithData = Object.entries(stats.totalBysite ?? {})
+    .sort(([, a], [, b]) => b - a);
 
   if (loading) {
     return (
@@ -81,6 +83,20 @@ export default function Dashboard({ stats: externalStats, loading: externalLoadi
           </span>
         </div>
       </div>
+
+      {/* All-time per-site breakdown */}
+      {allTimeSitesWithData.length > 0 && (
+        <div>
+          <p className="text-doom-muted text-xs font-mono uppercase tracking-wider mb-2">
+            All Time Breakdown
+          </p>
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            {allTimeSitesWithData.map(([site, meters]) => (
+              <SiteCard key={`all_time_${site}`} site={site} meters={meters} />
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Empty state */}
       {stats.todayMeters === 0 && stats.totalMeters === 0 && (

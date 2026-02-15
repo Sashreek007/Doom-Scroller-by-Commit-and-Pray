@@ -7,6 +7,8 @@ export interface DbStatsSnapshot {
   todayMeters: number;
   todayBysite: Record<string, number>;
   totalMeters: number;
+  totalBysite: Record<string, number>;
+  allTimeBysiteUpdatedAt: number;
   updatedAt: number;
 }
 
@@ -41,6 +43,8 @@ export function getCachedDbStats(userId: string, currentDayKey: string): DbStats
       todayMeters: 0,
       todayBysite: {},
       totalMeters: 0,
+      totalBysite: {},
+      allTimeBysiteUpdatedAt: 0,
       updatedAt: 0,
     };
   }
@@ -63,12 +67,16 @@ export function setDbStatsFromServer(
   userId: string,
   dayKey: string,
   response: GetStatsResponse,
+  allTimeBysiteUpdatedAt?: number,
 ) {
+  const previous = dbStatsCache.get(userId);
   dbStatsCache.set(userId, {
     dayKey,
     todayMeters: response.todayMeters,
     todayBysite: { ...response.todayBysite },
     totalMeters: response.totalMeters,
+    totalBysite: { ...response.totalBysite },
+    allTimeBysiteUpdatedAt: allTimeBysiteUpdatedAt ?? previous?.allTimeBysiteUpdatedAt ?? 0,
     updatedAt: Date.now(),
   });
 }
@@ -79,6 +87,7 @@ export function applySyncedBatchesToDbCache(userId: string, batches: ScrollBatch
   const updated: DbStatsSnapshot = {
     ...cached,
     todayBysite: { ...cached.todayBysite },
+    totalBysite: { ...cached.totalBysite },
   };
 
   for (const batch of batches) {
@@ -86,11 +95,12 @@ export function applySyncedBatchesToDbCache(userId: string, batches: ScrollBatch
     if (!Number.isFinite(meters) || meters <= 0) continue;
 
     updated.totalMeters += meters;
+    const site = toCanonicalSite(batch.site);
+    if (!site) continue;
+    updated.totalBysite[site] = (updated.totalBysite[site] ?? 0) + meters;
 
     // Only increment today's cache when the batch end timestamp is today (local time).
     if (toDayKeyFromMs(batch.lastUpdate) === currentDayKey) {
-      const site = toCanonicalSite(batch.site);
-      if (!site) continue;
       updated.todayMeters += meters;
       updated.todayBysite[site] = (updated.todayBysite[site] ?? 0) + meters;
     }

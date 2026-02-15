@@ -32,6 +32,7 @@ export interface GetStatsResponse {
   todayMeters: number;
   todayBysite: Record<string, number>;
   totalMeters: number;
+  totalBysite: Record<string, number>;
 }
 
 export interface GetBattleTimerMessage {
