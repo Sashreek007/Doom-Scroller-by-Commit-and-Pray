@@ -307,8 +307,7 @@ Safety/control approach:
 
 * Sashreek Addanki
 * Lalith Valluru
-* [NAME_3]
-* [NAME_4]
+* Sreeman Reddy Gokula
 
 ---
 
