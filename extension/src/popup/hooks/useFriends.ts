@@ -66,6 +66,15 @@ function scoreProfile(query: string, profile: Profile): number {
   return Math.max(usernameScore, displayScore);
 }
 
+function isDuplicateFriendshipError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const code = String((error as { code?: unknown }).code ?? '');
+  const message = String((error as { message?: unknown }).message ?? '').toLowerCase();
+  return code === '23505'
+    || message.includes('duplicate key')
+    || message.includes('unique_friendship');
+}
+
 export function useFriends(userId: string) {
   const [friends, setFriends] = useState<FriendWithProfile[]>([]);
   const [pendingReceived, setPendingReceived] = useState<FriendWithProfile[]>([]);
@@ -221,11 +230,45 @@ export function useFriends(userId: string) {
     const existingFriend = friends.find((item) => item.profile.id === targetUserId);
     if (existingFriend) return;
 
+    const { data: existingRows, error: existingError } = await supabase
+      .from('friendships')
+      .select('*')
+      .or(
+        `and(requester_id.eq.${userId},addressee_id.eq.${targetUserId}),and(requester_id.eq.${targetUserId},addressee_id.eq.${userId})`,
+      );
+
+    if (existingError) throw existingError;
+
+    const rows = (existingRows as Friendship[] | null) ?? [];
+    if (rows.some((row) => row.status === 'accepted')) return;
+    if (rows.some((row) => row.status === 'pending')) return;
+
+    const rejectedIds = rows
+      .filter((row) => row.status === 'rejected')
+      .map((row) => row.id);
+
+    if (rejectedIds.length > 0) {
+      const { error: deleteError } = await supabase
+        .from('friendships')
+        .delete()
+        .in('id', rejectedIds);
+      if (deleteError) throw deleteError;
+    }
+
     const { error } = await supabase.from('friendships').insert({
       requester_id: userId,
       addressee_id: targetUserId,
+      status: 'pending',
     });
-    if (error) throw error;
+
+    if (error) {
+      if (isDuplicateFriendshipError(error)) {
+        await refresh();
+        return;
+      }
+      throw error;
+    }
+
     await refresh();
   };
 

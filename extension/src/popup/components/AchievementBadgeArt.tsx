@@ -17,15 +17,6 @@ interface AchievementBadgeArtProps {
   className?: string;
 }
 
-function hashString(input: string): number {
-  let hash = 2166136261;
-  for (let i = 0; i < input.length; i += 1) {
-    hash ^= input.charCodeAt(i);
-    hash += (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24);
-  }
-  return Math.abs(hash >>> 0);
-}
-
 function getMetaTags(meta: Achievement['meta']): string[] {
   if (!meta || typeof meta !== 'object') return [];
   const tags = (meta as Record<string, unknown>).tags;
@@ -59,22 +50,22 @@ function detectMotif(achievement: Achievement): BadgeMotif {
   return 'focus';
 }
 
-function getRarityPalette(rarity: AchievementRarity): [string, string] {
-  if (rarity === 'legendary') return ['#f59e0b', '#f97316'];
-  if (rarity === 'epic') return ['#06b6d4', '#3b82f6'];
-  if (rarity === 'rare') return ['#39ff14', '#22c55e'];
-  return ['#64748b', '#334155'];
+function getRarityBorderColor(rarity: AchievementRarity): string {
+  if (rarity === 'legendary') return '#f59e0b';
+  if (rarity === 'epic') return '#22d3ee';
+  if (rarity === 'rare') return '#39ff14';
+  return '#475569';
 }
 
-function getMotifPalette(motif: BadgeMotif): [string, string] {
-  if (motif === 'sprint') return ['#fb7185', '#f43f5e'];
-  if (motif === 'specialist') return ['#2dd4bf', '#14b8a6'];
-  if (motif === 'diversity') return ['#f59e0b', '#f97316'];
-  if (motif === 'marathon') return ['#38bdf8', '#60a5fa'];
-  if (motif === 'distance') return ['#a78bfa', '#c084fc'];
-  if (motif === 'streak') return ['#22c55e', '#84cc16'];
-  if (motif === 'night') return ['#0ea5e9', '#6366f1'];
-  return ['#f472b6', '#8b5cf6'];
+function getMotifPalette(motif: BadgeMotif): [string, string, string] {
+  if (motif === 'sprint') return ['#f43f5e', '#fb7185', '#120d14'];
+  if (motif === 'specialist') return ['#14b8a6', '#5eead4', '#0c1414'];
+  if (motif === 'diversity') return ['#f59e0b', '#facc15', '#16120c'];
+  if (motif === 'marathon') return ['#38bdf8', '#7dd3fc', '#0b1218'];
+  if (motif === 'distance') return ['#a78bfa', '#c4b5fd', '#120f18'];
+  if (motif === 'streak') return ['#22c55e', '#86efac', '#0d1510'];
+  if (motif === 'night') return ['#6366f1', '#818cf8', '#0f1020'];
+  return ['#e879f9', '#f0abfc', '#150f19'];
 }
 
 function motifShape(motif: BadgeMotif): JSX.Element {
@@ -154,62 +145,55 @@ export default function AchievementBadgeArt({
   className = '',
 }: AchievementBadgeArtProps) {
   const motif = detectMotif(achievement);
-  const [r1, r2] = getRarityPalette(rarity);
-  const [m1, m2] = getMotifPalette(motif);
-  const seed = hashString(`${achievement.id}:${achievement.event_key ?? achievement.title}`);
-  const hueShift = seed % 20;
+  const rarityBorder = getRarityBorderColor(rarity);
+  const [motifPrimary, motifSecondary, motifBg] = getMotifPalette(motif);
   const scale = size === 'lg' ? 76 : 58;
-  const dotCount = 4 + (seed % 4);
-
-  const dots = Array.from({ length: dotCount }).map((_, index) => {
-    const step = index + 1;
-    const x = 12 + ((seed * (step * 11)) % 76);
-    const y = 10 + ((seed * (step * 17)) % 80);
-    const r = 1.5 + (seed % (step + 3));
-    return <circle key={`${achievement.id}-dot-${index}`} cx={x} cy={y} r={Math.min(r, 4)} />;
-  });
-
-  const background = `radial-gradient(circle at 20% 16%, ${m1}99 0%, ${m1}33 34%, transparent 60%), radial-gradient(circle at 82% 88%, ${m2}88 0%, ${m2}2a 36%, transparent 62%), radial-gradient(circle at 55% 18%, ${r1}66 0%, transparent 45%), linear-gradient(155deg, #080e17 0%, #111a2b 52%, #090f1a 100%)`;
+  const background = `linear-gradient(180deg, ${motifBg} 0%, #0a0f15 100%)`;
 
   return (
     <div
-      className={`relative rounded-xl border border-white/10 overflow-hidden ${className}`}
+      className={`relative rounded-xl border overflow-hidden ${className}`}
       style={{
         width: scale,
         height: scale,
         backgroundImage: background,
-        boxShadow: `inset 0 0 0 1px ${r1}55, 0 8px 20px rgba(0,0,0,0.35), 0 0 20px ${m1}38, 0 0 12px ${r2}2e`,
+        borderColor: `${rarityBorder}88`,
+        boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.06), 0 6px 14px rgba(0,0,0,0.35)',
       }}
     >
       <div
-        className="absolute inset-[3px] rounded-[10px] border pointer-events-none"
-        style={{ borderColor: `${r2}66` }}
+        className="absolute inset-0 pointer-events-none opacity-20"
+        style={{
+          backgroundImage: 'linear-gradient(to right, rgba(255,255,255,0.08) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,0.08) 1px, transparent 1px)',
+          backgroundSize: '8px 8px',
+        }}
       />
       <div
-        className="absolute inset-0"
-        style={{
-          backgroundImage: `linear-gradient(${110 + hueShift}deg, transparent 18%, ${m2}40 46%, ${r1}36 60%, transparent 82%)`,
-        }}
+        className="absolute inset-[2px] rounded-[10px] border pointer-events-none"
+        style={{ borderColor: 'rgba(255,255,255,0.08)' }}
       />
       <svg
         viewBox="0 0 100 100"
         className="absolute inset-0 w-full h-full"
         style={{
-          color: m1,
-          filter: 'drop-shadow(0 0 8px rgba(0,0,0,0.4))',
+          color: motifPrimary,
+          filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.45))',
         }}
       >
-        <g fill={`${m2}aa`}>{dots}</g>
         <g
-          fill="currentColor"
-          stroke={`${r1}dd`}
+          fill={`${motifSecondary}aa`}
+          stroke={motifPrimary}
           strokeLinejoin="round"
           strokeLinecap="round"
+          strokeWidth={5}
         >
           {motifShape(motif)}
         </g>
       </svg>
-      <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.18),transparent_56%)]" />
+      <div
+        className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full"
+        style={{ backgroundColor: rarityBorder }}
+      />
     </div>
   );
 }

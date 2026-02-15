@@ -4,6 +4,7 @@ import type { User, Session } from '@supabase/supabase-js';
 import type { Profile } from '@/shared/types';
 import { ensureProfileExists, fetchProfile } from '@/shared/profile';
 import { AUTH_PROFILE_CACHE_PREFIX, writeProfileToCache } from '@/shared/profile-cache';
+import { validateStrongPassword } from '@/shared/password-policy';
 
 const PROFILE_RESOLVE_TIMEOUT_MS = 10000;
 const PROFILE_RESOLVE_MAX_RETRIES = 3;
@@ -217,6 +218,11 @@ export function useAuth() {
   }, [ensureActiveSession, readCachedProfile, resolveProfileRobust, writeCachedProfile]);
 
   const signUp = async (email: string, password: string, displayName: string) => {
+    const passwordValidation = validateStrongPassword(password);
+    if (!passwordValidation.valid) {
+      throw new Error(passwordValidation.message);
+    }
+
     const { data, error } = await withNetworkRetry(() =>
       supabase.auth.signUp({
         email,

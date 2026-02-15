@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { supabase } from '@/shared/supabase';
 import type { ChatMessage } from '@/shared/types';
 import type { ChatbotResponse } from '@/shared/messages';
@@ -28,10 +28,6 @@ function buildFallbackReply(message: string): string {
     return FALLBACK_REPLIES[1];
   }
   return FALLBACK_REPLIES[2];
-}
-
-function isFallbackMessage(content: string): boolean {
-  return FALLBACK_REPLIES.some((f) => content.trim() === f);
 }
 
 function temporaryMessage(role: 'user' | 'assistant', content: string): ChatMessage {
@@ -149,49 +145,14 @@ async function invokeChatbotApi(message: string, accessToken: string): Promise<C
 
 export function useChat(userId: string) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [context, setContext] = useState<ChatContextSnapshot | null>(null);
   const sendingRef = useRef(false);
 
-  const refresh = useCallback(async () => {
-    const { data, error: queryError } = await supabase
-      .from('chat_messages')
-      .select('id, user_id, role, content, created_at')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: true })
-      .limit(60);
-
-    if (queryError) {
-      setLoading(false);
-      return;
-    }
-
-    // Filter out old fallback messages that were persisted to DB in earlier versions.
-    const dbMessages = ((data as ChatMessage[]) ?? []).filter(
-      (m) => !(m.role === 'assistant' && isFallbackMessage(m.content)),
-    );
-
-    // Merge: keep any temporary messages (id starts with "tmp_") that aren't in DB yet.
-    setMessages((prev) => {
-      const tmpMessages = prev.filter((m) => m.id.startsWith('tmp_'));
-      if (tmpMessages.length === 0) return dbMessages;
-
-      // Append temporary messages that don't have a DB counterpart yet.
-      const dbContentSet = new Set(dbMessages.map((m) => `${m.role}:${m.content}`));
-      const uniqueTmp = tmpMessages.filter(
-        (m) => !dbContentSet.has(`${m.role}:${m.content}`),
-      );
-      return [...dbMessages, ...uniqueTmp];
-    });
-    setLoading(false);
-  }, [userId]);
-
-  useEffect(() => {
-    setLoading(true);
-    void refresh();
-  }, [refresh]);
+  // Chat UI starts fresh each visit. The AI still has memory via DB history
+  // loaded server-side in the Edge Function.
 
   const getAccessToken = useCallback(async (): Promise<string> => {
     // 1. Get existing session first (local/cached — won't throw on network error).
@@ -270,8 +231,6 @@ export function useChat(userId: string) {
 
       setMessages((prev) => [...prev, temporaryMessage('assistant', reply)]);
       setContext(payload.context ?? null);
-      // Delay refresh to give the Edge Function time to persist messages to DB.
-      setTimeout(() => { void refresh(); }, 1500);
     } catch (err) {
       const fallback = buildFallbackReply(message);
       setMessages((prev) => [...prev, temporaryMessage('assistant', fallback)]);
@@ -283,7 +242,7 @@ export function useChat(userId: string) {
       sendingRef.current = false;
       setSending(false);
     }
-  }, [invokeChatbot, refresh, userId]);
+  }, [invokeChatbot, userId]);
 
   return {
     messages,
@@ -291,7 +250,6 @@ export function useChat(userId: string) {
     sending,
     error,
     context,
-    refresh,
     sendMessage,
     clearError: () => setError(null),
   };

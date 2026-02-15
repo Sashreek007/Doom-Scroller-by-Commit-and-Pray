@@ -18,13 +18,13 @@ function getAchievementRarity(rarity: Achievement['rarity']): AchievementRarity 
 
 function getRarityClasses(rarity: AchievementRarity): string {
   if (rarity === 'legendary') {
-    return 'border-fuchsia-400/60 bg-fuchsia-500/10 shadow-[0_0_18px_rgba(192,38,211,0.28)]';
+    return 'border-amber-400/60 bg-doom-surface';
   }
   if (rarity === 'epic') {
-    return 'border-cyan-400/60 bg-cyan-500/10 shadow-[0_0_16px_rgba(6,182,212,0.26)]';
+    return 'border-cyan-400/55 bg-doom-surface';
   }
   if (rarity === 'rare') {
-    return 'border-neon-green/50 bg-neon-green/10 shadow-[0_0_14px_rgba(57,255,20,0.24)]';
+    return 'border-neon-green/45 bg-doom-surface';
   }
   return 'border-doom-border bg-doom-surface';
 }

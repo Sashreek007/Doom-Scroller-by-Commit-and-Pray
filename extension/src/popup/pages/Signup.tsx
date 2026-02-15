@@ -1,4 +1,8 @@
 import { useState } from 'react';
+import {
+  STRONG_PASSWORD_REQUIREMENTS,
+  validateStrongPassword,
+} from '@/shared/password-policy';
 
 interface SignupProps {
   onSignUp: (email: string, password: string, displayName: string) => Promise<void>;
@@ -42,8 +46,9 @@ export default function Signup({ onSignUp, onSwitchToLogin }: SignupProps) {
       return;
     }
 
-    if (password.length < 6) {
-      setError('Password must be at least 6 characters');
+    const passwordValidation = validateStrongPassword(password);
+    if (!passwordValidation.valid) {
+      setError(passwordValidation.message);
       return;
     }
 
@@ -97,11 +102,11 @@ export default function Signup({ onSignUp, onSwitchToLogin }: SignupProps) {
         <div className="relative">
           <input
             type={showPassword ? 'text' : 'password'}
-            placeholder="Password (min 6 chars)"
+            placeholder="Password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
-            minLength={6}
+            minLength={10}
             className="w-full bg-doom-surface border border-doom-border rounded-lg px-4 py-3 pr-10
                        text-white placeholder-doom-muted text-sm
                        focus:outline-none focus:border-neon-green/50 transition-colors"
@@ -114,6 +119,9 @@ export default function Signup({ onSignUp, onSwitchToLogin }: SignupProps) {
             {showPassword ? 'Hide' : 'Show'}
           </button>
         </div>
+        <p className="text-[11px] text-doom-muted leading-relaxed -mt-1">
+          {STRONG_PASSWORD_REQUIREMENTS}
+        </p>
         <input
           type={showPassword ? 'text' : 'password'}
           placeholder="Confirm Password"

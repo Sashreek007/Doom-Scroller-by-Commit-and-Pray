@@ -1,6 +1,10 @@
 import { useState } from 'react';
 import { supabase } from '@/shared/supabase';
 import type { Profile } from '@/shared/types';
+import {
+  STRONG_PASSWORD_REQUIREMENTS,
+  validateStrongPassword,
+} from '@/shared/password-policy';
 
 interface SettingsProps {
   profile: Profile;
@@ -13,6 +17,20 @@ export default function Settings({ profile, onSignOut, onProfileUpdated }: Setti
   const [displayName, setDisplayName] = useState(profile.display_name);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [updatingPassword, setUpdatingPassword] = useState(false);
+  const [passwordMessage, setPasswordMessage] = useState('');
+  const [passwordMessageKind, setPasswordMessageKind] = useState<'success' | 'error'>('error');
+
+  function toPasswordErrorMessage(err: unknown): string {
+    if (err && typeof err === 'object' && 'message' in err) {
+      const message = String((err as { message?: unknown }).message ?? '').trim();
+      if (message) return message;
+    }
+    return 'Failed to update password';
+  }
 
   const handleSave = async () => {
     setSaving(true);
@@ -36,6 +54,54 @@ export default function Settings({ profile, onSignOut, onProfileUpdated }: Setti
   };
 
   const hasChanges = isPublic !== profile.is_public || displayName !== profile.display_name;
+
+  const handlePasswordUpdate = async () => {
+    setPasswordMessage('');
+
+    if (!newPassword || !confirmNewPassword) {
+      setPasswordMessageKind('error');
+      setPasswordMessage('Enter and confirm your new password.');
+      return;
+    }
+
+    if (newPassword !== confirmNewPassword) {
+      setPasswordMessageKind('error');
+      setPasswordMessage('New passwords do not match.');
+      return;
+    }
+
+    const validation = validateStrongPassword(newPassword);
+    if (!validation.valid) {
+      setPasswordMessageKind('error');
+      setPasswordMessage(validation.message);
+      return;
+    }
+
+    setUpdatingPassword(true);
+    try {
+      const { error } = await supabase.auth.updateUser({
+        password: newPassword,
+      });
+
+      if (error) {
+        setPasswordMessageKind('error');
+        setPasswordMessage(toPasswordErrorMessage(error));
+        return;
+      }
+
+      setPasswordMessageKind('success');
+      setPasswordMessage('Password updated.');
+      setNewPassword('');
+      setConfirmNewPassword('');
+      setShowPassword(false);
+    } catch (err) {
+      setPasswordMessageKind('error');
+      setPasswordMessage(toPasswordErrorMessage(err));
+    } finally {
+      setUpdatingPassword(false);
+      setTimeout(() => setPasswordMessage(''), 2500);
+    }
+  };
 
   return (
     <div className="flex flex-col gap-5">
@@ -111,6 +177,60 @@ export default function Settings({ profile, onSignOut, onProfileUpdated }: Setti
           {message}
         </p>
       )}
+
+      {/* Password */}
+      <div className="card">
+        <p className="text-sm font-medium mb-2">Change Password</p>
+        <div className="space-y-2">
+          <div className="relative">
+            <input
+              type={showPassword ? 'text' : 'password'}
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              placeholder="New password"
+              minLength={10}
+              className="w-full bg-doom-surface border border-doom-border rounded-lg px-3 py-2 pr-12
+                         text-white text-sm focus:outline-none focus:border-neon-green/50 transition-colors"
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword((current) => !current)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-doom-muted hover:text-white text-xs transition-colors"
+            >
+              {showPassword ? 'Hide' : 'Show'}
+            </button>
+          </div>
+
+          <input
+            type={showPassword ? 'text' : 'password'}
+            value={confirmNewPassword}
+            onChange={(e) => setConfirmNewPassword(e.target.value)}
+            placeholder="Confirm new password"
+            minLength={10}
+            className="w-full bg-doom-surface border border-doom-border rounded-lg px-3 py-2
+                       text-white text-sm focus:outline-none focus:border-neon-green/50 transition-colors"
+          />
+
+          <p className="text-[11px] text-doom-muted leading-relaxed">
+            {STRONG_PASSWORD_REQUIREMENTS}
+          </p>
+
+          <button
+            onClick={handlePasswordUpdate}
+            disabled={updatingPassword}
+            className="w-full px-3 py-2 rounded-lg border border-neon-green/45 text-neon-green
+                       hover:bg-neon-green/10 transition-colors text-sm font-semibold disabled:opacity-50"
+          >
+            {updatingPassword ? 'Updating...' : 'Update Password'}
+          </button>
+
+          {passwordMessage && (
+            <p className={`text-xs text-center ${passwordMessageKind === 'success' ? 'text-neon-green' : 'text-neon-pink'}`}>
+              {passwordMessage}
+            </p>
+          )}
+        </div>
+      </div>
 
       {/* Danger zone */}
       <div className="mt-4 pt-4 border-t border-doom-border">
