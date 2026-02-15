@@ -306,7 +306,7 @@ Safety/control approach:
 ## 🧑‍🤝‍🧑 Team
 
 * Sashreek Addanki
-* [NAME_2]
+* Lalith Valluru
 * [NAME_3]
 * [NAME_4]
 
