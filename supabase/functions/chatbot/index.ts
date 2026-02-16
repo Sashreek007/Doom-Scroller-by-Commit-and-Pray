@@ -1,6 +1,6 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2.49.1';
-import { generateTextWithGemini, sanitizeAiText } from '../_shared/gemini.ts';
+import { generateChatWithGemini, sanitizeAiText } from '../_shared/gemini.ts';
 import { ensureProfileExistsForUser, loadUserBehaviorContext } from '../_shared/user-context.ts';
 import type { UserBehaviorContext } from '../_shared/user-context.ts';
 
@@ -90,41 +90,19 @@ function buildFallbackContext(user: { id: string; email?: string | null; user_me
   };
 }
 
-/** Strip AI responses that start with a quoted user message or username preamble. */
-function stripQuotedOpener(text: string): string {
-  let cleaned = text.trim();
-  // Remove "You said: ..." or 'You said: "..."' preambles
-  cleaned = cleaned.replace(/^you said:\s*/i, '');
-  // Remove leading quoted text like "Hello" or 'Hello'
-  cleaned = cleaned.replace(/^["'][^"']{1,120}["']\s*/, '');
-  // Remove leading username/display_name followed by comma/colon
-  cleaned = cleaned.replace(/^[a-z0-9_]{2,30}[,:]?\s*/i, '');
-  // Remove leftover punctuation from stripping
-  cleaned = cleaned.replace(/^[,:\-–—]\s*/, '');
-  return cleaned.trim() || text.trim();
-}
-
-function buildPrompt(
-  userMessage: string,
+function buildSystemInstruction(
   context: Awaited<ReturnType<typeof loadUserBehaviorContext>>,
-  history: StoredChatMessage[],
 ): string {
-  const recentHistory = history
-    .map((item) => `${item.role.toUpperCase()}: ${item.content}`)
-    .join('\n') || 'none';
-
   return [
-    'You are DoomScroller AI: sarcastic, witty, and concise.',
-    'You roast the user based only on their own scrolling data.',
-    'Privacy rule: never reveal or invent details about other users.',
-    'If asked about others, refuse and pivot to this user only.',
-    'Keep responses under 120 words.',
-    'Tone: playful roast, not hateful.',
-    'Never quote back or repeat the user\'s message in any form.',
-    'Never include the username or display name in your response.',
-    'Jump straight into your roast or answer. No openers, no greetings, no "You said..." preambles.',
-    `username: ${context.username}`,
-    `display_name: ${context.displayName}`,
+    'You are DoomScroller AI — sarcastic, witty, concise.',
+    'Roast the user based only on their scrolling data below.',
+    'Privacy: never reveal or invent details about other users.',
+    'Keep responses under 120 words. Playful roast, not hateful.',
+    'Reply directly. Never repeat, quote, or paraphrase what the user just said.',
+    'Never mention the username or display name.',
+    'Plain text only.',
+    '',
+    '--- USER SCROLL DATA ---',
     `total_meters: ${context.totalMeters}`,
     `recent_meters_${context.sampleWindowDays}d: ${context.recentMeters}`,
     `top_site: ${context.topSite ?? 'none'}`,
@@ -134,12 +112,9 @@ function buildPrompt(
     `max_burst_meters_5min: ${context.maxBurstMeters5Min}`,
     `active_days_${context.sampleWindowDays}d: ${context.activeDays}`,
     `streak_days: ${context.streakDays}`,
-    `recent_achievement_titles: ${context.recentAchievementTitles.join(' | ') || 'none'}`,
-    `rank_among_visible_profiles: ${context.rank ?? 'unknown'}`,
-    `percentile_among_visible_profiles: ${context.percentile ?? 'unknown'}`,
-    `conversation_history:\n${recentHistory}`,
-    `latest_user_message: ${userMessage}`,
-    'Respond with plain text only.',
+    `achievements: ${context.recentAchievementTitles.join(' | ') || 'none'}`,
+    `rank: ${context.rank ?? 'unknown'}`,
+    `percentile: ${context.percentile ?? 'unknown'}`,
   ].join('\n');
 }
 
@@ -154,7 +129,6 @@ serve(async (req: Request) => {
 
     const body = (await req.json()) as ChatRequest;
 
-    const authHeader = req.headers.get('Authorization');
     const accessToken = extractAccessToken(req, body);
     if (!accessToken) {
       return new Response(JSON.stringify({ error: 'Missing authorization header' }), {
@@ -181,28 +155,7 @@ serve(async (req: Request) => {
       error: authError,
     } = await supabase.auth.getUser(accessToken);
 
-    let user = primaryUser;
-
-    // Fallback: if token is expired but structurally valid, verify user via service role.
-    if ((authError || !user) && accessToken.includes('.')) {
-      try {
-        const payloadB64 = accessToken.split('.')[1];
-        const payload = JSON.parse(atob(payloadB64));
-        const userId = typeof payload.sub === 'string' ? payload.sub : null;
-        if (userId) {
-          const serviceRoleKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
-          const serviceClient = createClient(supabaseUrl, serviceRoleKey, {
-            auth: { persistSession: false, autoRefreshToken: false },
-          });
-          const { data: { user: serviceUser } } = await serviceClient.auth.admin.getUserById(userId);
-          if (serviceUser) {
-            user = serviceUser;
-          }
-        }
-      } catch (fallbackErr) {
-        console.warn('[chatbot] service-role fallback failed:', fallbackErr);
-      }
-    }
+    const user = primaryUser;
 
     if (!user) {
       return new Response(JSON.stringify({ error: 'Unauthorized' }), {
@@ -225,6 +178,29 @@ serve(async (req: Request) => {
         status: 400,
         headers: { ...corsHeaders, 'content-type': 'application/json' },
       });
+    }
+
+    // Rate limit: 5 user messages per day.
+    const DAILY_LIMIT = 5;
+    const todayStart = new Date();
+    todayStart.setUTCHours(0, 0, 0, 0);
+    const { count: todayCount, error: countError } = await supabase
+      .from('chat_messages')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', user.id)
+      .eq('role', 'user')
+      .gte('created_at', todayStart.toISOString());
+
+    if (!countError && typeof todayCount === 'number' && todayCount >= DAILY_LIMIT) {
+      return new Response(
+        JSON.stringify({
+          error: `You've hit your ${DAILY_LIMIT} message limit for today. Come back tomorrow for more roasts!`,
+        }),
+        {
+          status: 429,
+          headers: { ...corsHeaders, 'content-type': 'application/json' },
+        },
+      );
     }
 
     try {
@@ -257,13 +233,19 @@ serve(async (req: Request) => {
 
     const fallback = `You scrolled ${Math.round(context.recentMeters)}m in the last ${context.sampleWindowDays} days. Top app: ${context.topSite ?? 'unknown'}. Try touching grass before your thumb files overtime.`;
 
-    const aiRaw = await generateTextWithGemini(
-      buildPrompt(message, context, history),
+    // Convert DB history to Gemini chat turns.
+    const chatHistory = history.map((h) => ({
+      role: h.role === 'user' ? 'user' as const : 'model' as const,
+      text: h.content,
+    }));
+
+    const reply = (await generateChatWithGemini(
+      buildSystemInstruction(context),
+      chatHistory,
+      message,
       fallback,
       context.username,
-    );
-
-    const reply = stripQuotedOpener(sanitizeAiText(aiRaw, context.username)).slice(0, 800);
+    )).slice(0, 800);
 
     try {
       await supabase

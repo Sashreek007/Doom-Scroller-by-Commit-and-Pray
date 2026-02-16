@@ -80,6 +80,59 @@ export async function generateTextWithGemini(
   }
 }
 
+interface ChatTurn {
+  role: 'user' | 'model';
+  text: string;
+}
+
+/**
+ * Generate a chat response using Gemini's system instruction + multi-turn format.
+ * This keeps the system prompt separate from user messages so the model won't
+ * echo or reference the user's raw text.
+ */
+export async function generateChatWithGemini(
+  systemInstruction: string,
+  history: ChatTurn[],
+  userMessage: string,
+  fallback: string,
+  ownUsername?: string,
+): Promise<string> {
+  const apiKey = getApiKey();
+  if (!apiKey) return fallback;
+
+  try {
+    const contents = [
+      ...history.map((turn) => ({
+        role: turn.role,
+        parts: [{ text: turn.text }],
+      })),
+      { role: 'user', parts: [{ text: userMessage }] },
+    ];
+
+    const response = await fetch(`${GEMINI_ENDPOINT}?key=${encodeURIComponent(apiKey)}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: systemInstruction }] },
+        contents,
+        generationConfig: { temperature: 0.75 },
+      }),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`Gemini request failed (${response.status}): ${errText.slice(0, 200)}`);
+    }
+
+    const payload = (await response.json()) as GeminiResponse;
+    const text = extractText(payload);
+    if (!text) return fallback;
+    return sanitizeAiText(text, ownUsername) || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 export async function generateJsonWithGemini<T>(
   prompt: string,
   fallback: T,

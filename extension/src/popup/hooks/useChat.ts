@@ -63,8 +63,18 @@ function getEdgeStatus(err: unknown): number | null {
   return Number.isFinite(status) ? status : null;
 }
 
+function isRateLimitError(err: unknown): boolean {
+  return getEdgeStatus(err) === 429;
+}
+
 function errorMessage(err: unknown): string {
   const status = getEdgeStatus(err);
+  if (status === 429) {
+    // Use the server's message directly — it's already user-friendly.
+    const serverMsg = errorToString(err);
+    if (serverMsg) return serverMsg;
+    return "You've hit your 5 message limit for today. Come back tomorrow for more roasts!";
+  }
   if (status === 401 || status === 403) {
     return 'Session expired. Please sign out and sign in again.';
   }
@@ -232,12 +242,17 @@ export function useChat(userId: string) {
       setMessages((prev) => [...prev, temporaryMessage('assistant', reply)]);
       setContext(payload.context ?? null);
     } catch (err) {
-      const fallback = buildFallbackReply(message);
-      setMessages((prev) => [...prev, temporaryMessage('assistant', fallback)]);
       const reason = errorMessage(err);
-      setError(`AI service unavailable. ${reason || 'Showing fallback roast.'}`);
+      if (isRateLimitError(err)) {
+        // Show rate limit as a bot message, not a generic fallback.
+        setMessages((prev) => [...prev, temporaryMessage('assistant', reason)]);
+        setError(reason);
+      } else {
+        const fallback = buildFallbackReply(message);
+        setMessages((prev) => [...prev, temporaryMessage('assistant', fallback)]);
+        setError(`AI service unavailable. ${reason || 'Showing fallback roast.'}`);
+      }
       console.error('[DoomScroller] Chat invoke failed:', err);
-      // Don't persist fallback messages to DB — they pollute conversation history.
     } finally {
       sendingRef.current = false;
       setSending(false);

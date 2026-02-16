@@ -5,8 +5,7 @@
   "description": "Track your social media doomscrolling in meters. Compete with friends. Get roasted by AI.",
   "permissions": [
     "storage",
-    "alarms",
-    "activeTab"
+    "alarms"
   ],
   "host_permissions": [
     "https://facebook.com/*",
@@ -29,7 +28,7 @@
     "https://*.youtube.com/*",
     "https://pinterest.com/*",
     "https://*.pinterest.com/*",
-    "https://*.supabase.co/*"
+    "https://aknzrsgymehrixfwqefq.supabase.co/*"
   ],
   "background": {
     "service_worker": "service-worker-loader.js",
