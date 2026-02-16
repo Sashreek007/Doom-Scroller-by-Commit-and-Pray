@@ -67,7 +67,7 @@ export default function Signup({ onSignUp, onSwitchToLogin }: SignupProps) {
     try {
       const result = await onSignUp(email, password, displayName);
       if (result.requiresEmailVerification) {
-        setSuccess('Verification email sent. Open the inbox link, then come back and sign in.');
+        setSuccess('Verification email sent. Check inbox/spam, open the link, then come back and sign in.');
       } else {
         setSuccess('Account created. You can sign in now.');
       }

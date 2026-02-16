@@ -5,7 +5,7 @@ interface SetUsernameProps {
   onSetUsername: (username: string) => Promise<void>;
 }
 
-function UsernameHandleIcon({ className }: { className?: string }) {
+function UsernameControllerIcon({ className }: { className?: string }) {
   return (
     <svg
       className={className}
@@ -17,11 +17,11 @@ function UsernameHandleIcon({ className }: { className?: string }) {
       strokeLinejoin="round"
       aria-hidden="true"
     >
-      <path d="M8 7v10" />
-      <path d="M16 7v10" />
-      <path d="M5 10h14" />
-      <path d="M4 14h14" />
-      <circle cx="19" cy="18.5" r="1.5" />
+      <path d="M7 8h10a3 3 0 0 1 2.92 2.33l.84 3.6A2.5 2.5 0 0 1 18.26 17h-1.15a2 2 0 0 1-1.79-1.1l-.32-.64a1 1 0 0 0-.9-.56h-4.2a1 1 0 0 0-.9.56l-.32.64a2 2 0 0 1-1.79 1.1H5.74a2.5 2.5 0 0 1-2.44-3.07l.84-3.6A3 3 0 0 1 7 8Z" />
+      <path d="M8 11v3" />
+      <path d="M6.5 12.5h3" />
+      <circle cx="15.7" cy="11.5" r="0.9" />
+      <circle cx="17.9" cy="13.3" r="0.9" />
     </svg>
   );
 }
@@ -69,7 +69,7 @@ export default function SetUsername({ currentUsername, onSetUsername }: SetUsern
   return (
     <div className="flex flex-col items-center justify-center h-full px-8">
       <div className="w-14 h-14 rounded-full border border-doom-border bg-doom-surface/70 mb-3 flex items-center justify-center shadow-[0_0_18px_rgba(57,255,20,0.12)]">
-        <UsernameHandleIcon className="w-7 h-7 text-neon-green" />
+        <UsernameControllerIcon className="w-8 h-8 text-neon-green" />
       </div>
       <h1 className="text-xl font-bold font-mono neon-text-green mb-1">
         Pick a Username

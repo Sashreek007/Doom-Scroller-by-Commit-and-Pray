@@ -16,7 +16,7 @@ function toAuthErrorMessage(err: unknown): string {
   if (err instanceof Error) {
     const msg = err.message || '';
     if (msg.toLowerCase().includes('email not verified')) {
-      return 'Email not verified. Open the verification link from your inbox, then sign in.';
+      return 'Email not verified. Check inbox/spam for the verification email, open the link, then sign in.';
     }
     if (isNetworkErrorMsg(err)) {
       return 'Could not reach server. Office/school Wi-Fi may block required DNS. Connect to a personal hotspot and try again.';
