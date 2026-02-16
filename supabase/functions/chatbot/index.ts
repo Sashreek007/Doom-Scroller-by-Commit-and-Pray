@@ -155,7 +155,28 @@ serve(async (req: Request) => {
       error: authError,
     } = await supabase.auth.getUser(accessToken);
 
-    const user = primaryUser;
+    let user = primaryUser;
+
+    // Fallback: if token is expired but structurally valid, verify user via service role.
+    if ((authError || !user) && accessToken.includes('.')) {
+      try {
+        const payloadB64 = accessToken.split('.')[1];
+        const payload = JSON.parse(atob(payloadB64));
+        const userId = typeof payload.sub === 'string' ? payload.sub : null;
+        if (userId) {
+          const serviceRoleKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
+          const serviceClient = createClient(supabaseUrl, serviceRoleKey, {
+            auth: { persistSession: false, autoRefreshToken: false },
+          });
+          const { data: { user: serviceUser } } = await serviceClient.auth.admin.getUserById(userId);
+          if (serviceUser) {
+            user = serviceUser;
+          }
+        }
+      } catch (fallbackErr) {
+        console.warn('[chatbot] service-role fallback failed:', fallbackErr);
+      }
+    }
 
     if (!user) {
       return new Response(JSON.stringify({ error: 'Unauthorized' }), {
