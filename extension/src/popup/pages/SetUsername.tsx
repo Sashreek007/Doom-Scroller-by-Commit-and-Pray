@@ -5,6 +5,27 @@ interface SetUsernameProps {
   onSetUsername: (username: string) => Promise<void>;
 }
 
+function UsernameHandleIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.9}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M8 7v10" />
+      <path d="M16 7v10" />
+      <path d="M5 10h14" />
+      <path d="M4 14h14" />
+      <circle cx="19" cy="18.5" r="1.5" />
+    </svg>
+  );
+}
+
 export default function SetUsername({ currentUsername, onSetUsername }: SetUsernameProps) {
   const [username, setUsername] = useState('');
   const [error, setError] = useState('');
@@ -47,7 +68,9 @@ export default function SetUsername({ currentUsername, onSetUsername }: SetUsern
 
   return (
     <div className="flex flex-col items-center justify-center h-full px-8">
-      <p className="text-5xl mb-2">🎮</p>
+      <div className="w-14 h-14 rounded-full border border-doom-border bg-doom-surface/70 mb-3 flex items-center justify-center shadow-[0_0_18px_rgba(57,255,20,0.12)]">
+        <UsernameHandleIcon className="w-7 h-7 text-neon-green" />
+      </div>
       <h1 className="text-xl font-bold font-mono neon-text-green mb-1">
         Pick a Username
       </h1>

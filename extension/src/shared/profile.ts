@@ -49,16 +49,37 @@ export async function ensureProfileExists(
 
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const username = generateUsername(user);
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('profiles')
       .insert({
         id: user.id,
         username,
         display_name: toDisplayName(user),
         is_public: true,
+        world_public: true,
+        friends_public: true,
       })
       .select('*')
       .single();
+
+    if (error) {
+      const msg = error.message?.toLowerCase() ?? '';
+      const missingSplitPrivacyColumns = msg.includes('world_public') || msg.includes('friends_public');
+      if (missingSplitPrivacyColumns) {
+        const legacyInsert = await supabase
+          .from('profiles')
+          .insert({
+            id: user.id,
+            username,
+            display_name: toDisplayName(user),
+            is_public: true,
+          })
+          .select('*')
+          .single();
+        data = legacyInsert.data;
+        error = legacyInsert.error;
+      }
+    }
 
     if (!error && data) {
       return data as Profile;

@@ -7,6 +7,21 @@ interface FriendWithProfile {
   profile: Profile;
 }
 
+interface SocialProfileRow {
+  id: string;
+  username: string;
+  display_name: string;
+  avatar_url: string | null;
+  total_meters_scrolled: number | string;
+  coin_balance?: number | string | null;
+  coin_meter_checkpoint?: number | string | null;
+  created_at?: string | null;
+  is_public?: boolean;
+  world_public?: boolean;
+  friends_public?: boolean;
+  can_view_details?: boolean;
+}
+
 interface FriendAcceptanceNotice {
   userId: string;
   displayName: string;
@@ -75,6 +90,27 @@ function isDuplicateFriendshipError(error: unknown): boolean {
     || message.includes('unique_friendship');
 }
 
+function toProfile(row: SocialProfileRow): Profile {
+  return {
+    id: row.id,
+    username: row.username,
+    display_name: row.display_name,
+    avatar_url: row.avatar_url ?? null,
+    is_public: typeof row.is_public === 'boolean'
+      ? row.is_public
+      : typeof row.world_public === 'boolean'
+        ? row.world_public
+        : true,
+    world_public: typeof row.world_public === 'boolean' ? row.world_public : undefined,
+    friends_public: typeof row.friends_public === 'boolean' ? row.friends_public : undefined,
+    can_view_details: typeof row.can_view_details === 'boolean' ? row.can_view_details : undefined,
+    total_meters_scrolled: Number(row.total_meters_scrolled ?? 0),
+    coin_balance: Number(row.coin_balance ?? 0),
+    coin_meter_checkpoint: Number(row.coin_meter_checkpoint ?? 0),
+    created_at: row.created_at ?? new Date(0).toISOString(),
+  };
+}
+
 export function useFriends(userId: string) {
   const [friends, setFriends] = useState<FriendWithProfile[]>([]);
   const [pendingReceived, setPendingReceived] = useState<FriendWithProfile[]>([]);
@@ -117,11 +153,26 @@ export function useFriends(userId: string) {
 
         let profiles: Profile[] = [];
         if (otherUserIds.length > 0) {
-          const { data } = await supabase
-            .from('profiles')
-            .select('*')
-            .in('id', otherUserIds);
-          profiles = (data as Profile[]) ?? [];
+          const { data, error: profilesError } = await supabase
+            .rpc('get_social_profiles', {
+              profile_ids: otherUserIds,
+            });
+
+          if (!profilesError) {
+            profiles = ((data as SocialProfileRow[] | null) ?? []).map(toProfile);
+          } else {
+            const { data: legacyProfiles, error: legacyError } = await supabase
+              .from('profiles')
+              .select('*')
+              .in('id', otherUserIds);
+
+            if (legacyError) {
+              setLoading(false);
+              continue;
+            }
+
+            profiles = (legacyProfiles as Profile[]) ?? [];
+          }
         }
 
         const profileMap = new Map<string, Profile>();
@@ -336,19 +387,37 @@ export function useFriends(userId: string) {
       ),
     );
 
-    let queryBuilder = supabase
-      .from('profiles')
-      .select('*')
-      .neq('id', userId)
-      .limit(40);
+    const queryBuilder = supabase
+      .rpc('search_profiles_for_friend_requests', {
+        search_query: trimmed,
+        result_limit: 40,
+      });
 
-    if (clauses.length > 0) {
-      queryBuilder = queryBuilder.or(clauses.join(','));
+    const { data, error } = await queryBuilder;
+    if (error) {
+      let fallbackQuery = supabase
+        .from('profiles')
+        .select('*')
+        .neq('id', userId)
+        .limit(40);
+
+      if (clauses.length > 0) {
+        fallbackQuery = fallbackQuery.or(clauses.join(','));
+      }
+
+      const { data: fallbackData, error: fallbackError } = await fallbackQuery;
+      if (fallbackError) throw fallbackError;
+
+      return ((fallbackData as Profile[]) ?? [])
+        .map((profile) => ({ profile, score: scoreProfile(trimmed, profile) }))
+        .filter((item) => item.score > 0)
+        .sort((a, b) => b.score - a.score || a.profile.username.localeCompare(b.profile.username))
+        .slice(0, 10)
+        .map((item) => item.profile);
     }
 
-    const { data } = await queryBuilder;
-
-    return ((data as Profile[]) ?? [])
+    // Keep tokenized matching in the client for deterministic ranking behavior.
+    return (((data as SocialProfileRow[] | null) ?? []).map(toProfile))
       .map((profile) => ({ profile, score: scoreProfile(trimmed, profile) }))
       .filter((item) => item.score > 0)
       .sort((a, b) => b.score - a.score || a.profile.username.localeCompare(b.profile.username))

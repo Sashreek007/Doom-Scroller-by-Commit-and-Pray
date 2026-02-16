@@ -5,7 +5,11 @@ import {
 } from '@/shared/password-policy';
 
 interface SignupProps {
-  onSignUp: (email: string, password: string, displayName: string) => Promise<void>;
+  onSignUp: (
+    email: string,
+    password: string,
+    displayName: string,
+  ) => Promise<{ requiresEmailVerification: boolean }>;
   onSwitchToLogin: () => void;
 }
 
@@ -33,12 +37,14 @@ export default function Signup({ onSignUp, onSwitchToLogin }: SignupProps) {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
   const [isNetworkErr, setIsNetworkErr] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     setError('');
+    setSuccess('');
     setIsNetworkErr(false);
 
     if (password !== confirmPassword) {
@@ -59,7 +65,12 @@ export default function Signup({ onSignUp, onSwitchToLogin }: SignupProps) {
 
     setLoading(true);
     try {
-      await onSignUp(email, password, displayName);
+      const result = await onSignUp(email, password, displayName);
+      if (result.requiresEmailVerification) {
+        setSuccess('Verification email sent. Open the inbox link, then come back and sign in.');
+      } else {
+        setSuccess('Account created. You can sign in now.');
+      }
     } catch (err) {
       setIsNetworkErr(isNetworkErrorMsg(err));
       setError(toAuthErrorMessage(err));
@@ -146,6 +157,21 @@ export default function Signup({ onSignUp, onSwitchToLogin }: SignupProps) {
                 Tap to retry
               </button>
             )}
+          </div>
+        )}
+        {success && (
+          <div className="text-center space-y-2">
+            <p className="text-neon-green text-xs">{success}</p>
+            <p className="text-doom-muted text-[10px]">
+              If the email link opens an unreachable page, close that tab and sign in here.
+            </p>
+            <button
+              type="button"
+              onClick={onSwitchToLogin}
+              className="text-neon-cyan text-xs hover:underline"
+            >
+              Go to Sign In
+            </button>
           </div>
         )}
 

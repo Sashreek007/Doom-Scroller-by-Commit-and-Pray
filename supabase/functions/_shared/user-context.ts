@@ -179,14 +179,28 @@ export async function ensureProfileExistsForUser(
   ];
 
   for (const username of candidates) {
-    const insertRes = await supabase
+    let insertRes = await supabase
       .from('profiles')
       .insert({
         id: user.id,
         username,
         display_name: displayName,
         is_public: true,
+        world_public: true,
+        friends_public: true,
       });
+
+    const insertMessage = (insertRes.error?.message ?? '').toLowerCase();
+    if (insertRes.error && (insertMessage.includes('world_public') || insertMessage.includes('friends_public'))) {
+      insertRes = await supabase
+        .from('profiles')
+        .insert({
+          id: user.id,
+          username,
+          display_name: displayName,
+          is_public: true,
+        });
+    }
 
     if (!insertRes.error) return;
     const message = (insertRes.error.message ?? '').toLowerCase();

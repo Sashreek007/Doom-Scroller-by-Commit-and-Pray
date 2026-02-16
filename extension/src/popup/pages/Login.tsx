@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 interface LoginProps {
   onSignIn: (email: string, password: string) => Promise<void>;
   onSwitchToSignUp: () => void;
+  pendingVerificationEmail?: string | null;
 }
 
 function isNetworkErrorMsg(err: unknown): boolean {
@@ -14,6 +15,9 @@ function isNetworkErrorMsg(err: unknown): boolean {
 function toAuthErrorMessage(err: unknown): string {
   if (err instanceof Error) {
     const msg = err.message || '';
+    if (msg.toLowerCase().includes('email not verified')) {
+      return 'Email not verified. Open the verification link from your inbox, then sign in.';
+    }
     if (isNetworkErrorMsg(err)) {
       return 'Could not reach server. Office/school Wi-Fi may block required DNS. Connect to a personal hotspot and try again.';
     }
@@ -22,13 +26,21 @@ function toAuthErrorMessage(err: unknown): string {
   return 'Failed to sign in';
 }
 
-export default function Login({ onSignIn, onSwitchToSignUp }: LoginProps) {
-  const [email, setEmail] = useState('');
+export default function Login({ onSignIn, onSwitchToSignUp, pendingVerificationEmail = null }: LoginProps) {
+  const [email, setEmail] = useState(pendingVerificationEmail ?? '');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [isNetworkErr, setIsNetworkErr] = useState(false);
   const [loading, setLoading] = useState(false);
+  const appliedPendingEmailRef = useRef<string | null>(pendingVerificationEmail ?? null);
+
+  useEffect(() => {
+    if (!pendingVerificationEmail) return;
+    if (appliedPendingEmailRef.current === pendingVerificationEmail) return;
+    setEmail(pendingVerificationEmail);
+    appliedPendingEmailRef.current = pendingVerificationEmail;
+  }, [pendingVerificationEmail]);
 
   const handleSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -54,6 +66,20 @@ export default function Login({ onSignIn, onSwitchToSignUp }: LoginProps) {
       <p className="text-doom-muted text-xs mb-8">
         Track your shame in meters.
       </p>
+
+      {pendingVerificationEmail && (
+        <div
+          className="w-full mb-4 bg-neon-green/10 border border-neon-green/30 rounded-lg px-3 py-2"
+          role="status"
+        >
+          <p className="text-neon-green text-[11px] font-medium">
+            Verification pending for {pendingVerificationEmail}
+          </p>
+          <p className="text-doom-muted text-[10px] mt-1">
+            Open the email link, then sign in below with the same account.
+          </p>
+        </div>
+      )}
 
       <form onSubmit={handleSubmit} className="w-full space-y-4">
         <div>

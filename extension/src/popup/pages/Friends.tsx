@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useFriends } from '../hooks/useFriends';
 import type { Profile } from '@/shared/types';
+import { canViewProfileDetails } from '@/shared/privacy';
 import UserAvatar from '../components/UserAvatar';
 
 interface FriendsProps {
@@ -192,6 +193,10 @@ export default function Friends({ userId, onViewProfile, onPendingRequestsChange
               const alreadyFriend = friends.some((f) => f.profile.id === user.id);
               const alreadyRequested = pendingSent.some((f) => f.profile.id === user.id);
               const requestedYou = pendingReceived.some((f) => f.profile.id === user.id);
+              const canView = canViewProfileDetails(user, {
+                isOwnProfile: false,
+                isFriend: alreadyFriend,
+              });
               return (
                 <div key={user.id} className="card flex items-center justify-between">
                   <button
@@ -207,6 +212,9 @@ export default function Friends({ userId, onViewProfile, onPendingRequestsChange
                     <div className="text-left">
                       <p className="text-sm font-medium">{user.display_name}</p>
                       <p className="text-doom-muted text-xs font-mono">@{user.username}</p>
+                      {!canView && (
+                        <p className="text-[10px] text-doom-muted mt-0.5">Private account</p>
+                      )}
                     </div>
                   </button>
                   {alreadyFriend ? (
@@ -263,11 +271,17 @@ export default function Friends({ userId, onViewProfile, onPendingRequestsChange
                     </div>
                   </button>
                   <div className="flex items-center gap-2">
-                    <span className="text-doom-muted text-xs font-mono whitespace-nowrap">
-                      {profile.total_meters_scrolled < 1000
-                        ? `${Math.round(profile.total_meters_scrolled)}m`
-                        : `${(profile.total_meters_scrolled / 1000).toFixed(1)}km`}
-                    </span>
+                    {canViewProfileDetails(profile, { isOwnProfile: false, isFriend: true }) ? (
+                      <span className="text-doom-muted text-xs font-mono whitespace-nowrap">
+                        {profile.total_meters_scrolled < 1000
+                          ? `${Math.round(profile.total_meters_scrolled)}m`
+                          : `${(profile.total_meters_scrolled / 1000).toFixed(1)}km`}
+                      </span>
+                    ) : (
+                      <span className="text-doom-muted text-[11px] font-mono whitespace-nowrap">
+                        Private
+                      </span>
+                    )}
                     <button
                       onClick={() => handleRemoveFriend(friendship.id)}
                       disabled={removingFriendshipId === friendship.id}

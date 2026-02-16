@@ -5,12 +5,22 @@ import type { Profile } from '@/shared/types';
 import { ensureProfileExists, fetchProfile } from '@/shared/profile';
 import { AUTH_PROFILE_CACHE_PREFIX, writeProfileToCache } from '@/shared/profile-cache';
 import { validateStrongPassword } from '@/shared/password-policy';
+import {
+  clearPendingEmailVerification,
+  setPendingEmailVerification,
+} from '@/shared/pending-email-verification';
 
 const PROFILE_RESOLVE_TIMEOUT_MS = 10000;
 const PROFILE_RESOLVE_MAX_RETRIES = 3;
 const PROFILE_RETRY_DELAY_MS = 700;
 const AUTH_NETWORK_RETRIES = 2;
 const AUTH_RETRY_DELAY_MS = 1000;
+
+function isEmailVerified(user: User | null | undefined): boolean {
+  if (!user) return false;
+  const confirmedAt = (user as unknown as { email_confirmed_at?: string | null }).email_confirmed_at;
+  return typeof confirmedAt === 'string' && confirmedAt.length > 0;
+}
 
 function isNetworkError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
@@ -38,6 +48,10 @@ interface AuthState {
   session: Session | null;
   loading: boolean;
   profileError: string | null;
+}
+
+interface SignUpResult {
+  requiresEmailVerification: boolean;
 }
 
 export function useAuth() {
@@ -77,26 +91,9 @@ export function useAuth() {
     }
   }, []);
 
-  const ensureProfilePublic = useCallback(async (profile: Profile | null): Promise<Profile | null> => {
-    if (!profile || profile.is_public) return profile;
-    const { data, error } = await supabase
-      .from('profiles')
-      .update({ is_public: true })
-      .eq('id', profile.id)
-      .select('*')
-      .single();
-    if (error) {
-      console.warn('[DoomScroller] ensureProfilePublic error:', error.message);
-      return profile;
-    }
-    return data as Profile;
-  }, []);
-
   const resolveProfile = useCallback(async (user: User): Promise<Profile | null> => {
-    const profile = await ensureProfileExists(supabase, user);
-    const publicProfile = await ensureProfilePublic(profile).catch(() => profile);
-    return publicProfile;
-  }, [ensureProfilePublic]);
+    return ensureProfileExists(supabase, user);
+  }, []);
 
   const resolveProfileWithTimeout = useCallback(async (
     user: User,
@@ -145,6 +142,14 @@ export function useAuth() {
       if (!mounted) return;
 
       if (activeSession?.user) {
+        if (!isEmailVerified(activeSession.user)) {
+          await supabase.auth.signOut().catch(() => {});
+          loadedUserId.current = null;
+          loadedProfileUserId.current = null;
+          setState({ user: null, profile: null, session: null, loading: false, profileError: null });
+          return;
+        }
+
         const userId = activeSession.user.id;
         const userChanged = loadedUserId.current !== userId;
 
@@ -217,7 +222,7 @@ export function useAuth() {
     };
   }, [ensureActiveSession, readCachedProfile, resolveProfileRobust, writeCachedProfile]);
 
-  const signUp = async (email: string, password: string, displayName: string) => {
+  const signUp = async (email: string, password: string, displayName: string): Promise<SignUpResult> => {
     const passwordValidation = validateStrongPassword(password);
     if (!passwordValidation.valid) {
       throw new Error(passwordValidation.message);
@@ -233,7 +238,16 @@ export function useAuth() {
       }),
     );
     if (error) throw error;
-    return data;
+
+    const requiresEmailVerification = !isEmailVerified(data.user ?? null);
+    if (requiresEmailVerification) {
+      await setPendingEmailVerification(email).catch(() => {});
+      await supabase.auth.signOut().catch(() => {});
+    } else {
+      await clearPendingEmailVerification().catch(() => {});
+    }
+
+    return { requiresEmailVerification };
   };
 
   const signIn = async (email: string, password: string) => {
@@ -244,6 +258,13 @@ export function useAuth() {
       }),
     );
     if (error) throw error;
+
+    if (!isEmailVerified(data.session?.user ?? null)) {
+      await supabase.auth.signOut().catch(() => {});
+      throw new Error('Email not verified. Please verify from your inbox, then sign in.');
+    }
+
+    await clearPendingEmailVerification().catch(() => {});
 
     // Immediately update state so UI transitions without waiting for onAuthStateChange.
     if (data.session?.user) {
@@ -288,6 +309,7 @@ export function useAuth() {
   const signOut = async () => {
     const { error } = await supabase.auth.signOut();
     if (error) throw error;
+    await clearPendingEmailVerification().catch(() => {});
     loadedUserId.current = null;
     loadedProfileUserId.current = null;
     setState({ user: null, profile: null, session: null, loading: false, profileError: null });

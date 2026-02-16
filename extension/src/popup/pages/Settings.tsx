@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { supabase } from '@/shared/supabase';
 import type { Profile } from '@/shared/types';
 import {
   STRONG_PASSWORD_REQUIREMENTS,
   validateStrongPassword,
 } from '@/shared/password-policy';
+import { getFriendsPublic, getWorldPublic } from '@/shared/privacy';
 
 interface SettingsProps {
   profile: Profile;
@@ -13,7 +14,8 @@ interface SettingsProps {
 }
 
 export default function Settings({ profile, onSignOut, onProfileUpdated }: SettingsProps) {
-  const [isPublic, setIsPublic] = useState(profile.is_public);
+  const [worldPublic, setWorldPublic] = useState(getWorldPublic(profile));
+  const [friendsPublic, setFriendsPublic] = useState(getFriendsPublic(profile));
   const [displayName, setDisplayName] = useState(profile.display_name);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
@@ -23,6 +25,12 @@ export default function Settings({ profile, onSignOut, onProfileUpdated }: Setti
   const [updatingPassword, setUpdatingPassword] = useState(false);
   const [passwordMessage, setPasswordMessage] = useState('');
   const [passwordMessageKind, setPasswordMessageKind] = useState<'success' | 'error'>('error');
+
+  useEffect(() => {
+    setWorldPublic(getWorldPublic(profile));
+    setFriendsPublic(getFriendsPublic(profile));
+    setDisplayName(profile.display_name);
+  }, [profile]);
 
   function toPasswordErrorMessage(err: unknown): string {
     if (err && typeof err === 'object' && 'message' in err) {
@@ -38,7 +46,9 @@ export default function Settings({ profile, onSignOut, onProfileUpdated }: Setti
     const { error } = await supabase
       .from('profiles')
       .update({
-        is_public: isPublic,
+        is_public: worldPublic,
+        world_public: worldPublic,
+        friends_public: friendsPublic,
         display_name: displayName,
       })
       .eq('id', profile.id);
@@ -53,7 +63,11 @@ export default function Settings({ profile, onSignOut, onProfileUpdated }: Setti
     setTimeout(() => setMessage(''), 2000);
   };
 
-  const hasChanges = isPublic !== profile.is_public || displayName !== profile.display_name;
+  const hasChanges = (
+    worldPublic !== getWorldPublic(profile)
+    || friendsPublic !== getFriendsPublic(profile)
+    || displayName !== profile.display_name
+  );
 
   const handlePasswordUpdate = async () => {
     setPasswordMessage('');
@@ -133,32 +147,61 @@ export default function Settings({ profile, onSignOut, onProfileUpdated }: Setti
         </div>
       </div>
 
-      {/* Privacy toggle */}
+      {/* Privacy controls */}
       <div className="card">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-3">
           <div>
-            <p className="text-sm font-medium">Public Profile</p>
+            <p className="text-sm font-medium">World Visibility</p>
             <p className="text-doom-muted text-xs mt-0.5">
-              {isPublic
-                ? 'Anyone can see your profile and stats'
-                : 'Only friends can see your profile'}
+              {worldPublic
+                ? 'Visible to everyone (profile + world leaderboard)'
+                : 'Hidden from world; choose friend visibility below'}
             </p>
           </div>
           <button
-            onClick={() => setIsPublic(!isPublic)}
+            onClick={() => setWorldPublic((prev) => !prev)}
             className={`w-12 h-6 rounded-full transition-all duration-200 relative
-              ${isPublic ? 'bg-neon-green/30' : 'bg-doom-border'}`}
+              ${worldPublic ? 'bg-neon-green/30' : 'bg-doom-border'}`}
           >
             <div
               className={`w-5 h-5 rounded-full absolute top-0.5 transition-all duration-200
                 ${
-                  isPublic
+                  worldPublic
                     ? 'left-6 bg-neon-green shadow-neon-green'
                     : 'left-0.5 bg-doom-muted'
                 }`}
             />
           </button>
         </div>
+
+        {!worldPublic && (
+          <div className="mt-3 pt-3 border-t border-doom-border">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium">Friends Visibility</p>
+                <p className="text-doom-muted text-xs mt-0.5">
+                  {friendsPublic
+                    ? 'Friends can view your profile + friends leaderboard'
+                    : 'No one can view your profile details'}
+                </p>
+              </div>
+              <button
+                onClick={() => setFriendsPublic((prev) => !prev)}
+                className={`w-12 h-6 rounded-full transition-all duration-200 relative
+                  ${friendsPublic ? 'bg-neon-green/30' : 'bg-doom-border'}`}
+              >
+                <div
+                  className={`w-5 h-5 rounded-full absolute top-0.5 transition-all duration-200
+                    ${
+                      friendsPublic
+                        ? 'left-6 bg-neon-green shadow-neon-green'
+                        : 'left-0.5 bg-doom-muted'
+                    }`}
+                />
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Save button */}

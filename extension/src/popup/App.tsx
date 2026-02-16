@@ -15,6 +15,10 @@ import { usePendingFriendRequestsCount } from './hooks/usePendingFriendRequestsC
 import { metersToCoins } from '@/shared/coins';
 import GoldCoinIcon from './components/GoldCoinIcon';
 import { useScrollStats } from './hooks/useScrollStats';
+import {
+  getPendingEmailVerification,
+  type PendingEmailVerificationState,
+} from '@/shared/pending-email-verification';
 
 const ACTIVE_PAGE_STORAGE_PREFIX = 'doom_popup_active_page_';
 const RESTORABLE_PAGES = new Set([
@@ -64,6 +68,7 @@ function App() {
     refreshProfile,
   } = useAuth();
   const [authView, setAuthView] = useState<'login' | 'signup'>('login');
+  const [pendingEmailVerification, setPendingEmailVerification] = useState<PendingEmailVerificationState | null>(null);
   const [activePage, setActivePage] = useState('home');
   const [viewingProfileId, setViewingProfileId] = useState<string | null>(null);
   const [activePageRestored, setActivePageRestored] = useState(false);
@@ -82,6 +87,23 @@ function App() {
       sawLoggedOutStateRef.current = true;
     }
   }, [loading, user]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (user) {
+      setPendingEmailVerification(null);
+      return;
+    }
+
+    void (async () => {
+      const pending = await getPendingEmailVerification();
+      if (!cancelled) setPendingEmailVerification(pending);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
 
   useEffect(() => {
     setViewingProfileId(null);
@@ -155,13 +177,22 @@ function App() {
           <Login
             onSignIn={async (email, password) => {
               await signIn(email, password);
+              setPendingEmailVerification(null);
             }}
+            pendingVerificationEmail={pendingEmailVerification?.email ?? null}
             onSwitchToSignUp={() => setAuthView('signup')}
           />
         ) : (
           <Signup
             onSignUp={async (email, password, displayName) => {
-              await signUp(email, password, displayName);
+              const result = await signUp(email, password, displayName);
+              if (result.requiresEmailVerification) {
+                setPendingEmailVerification({
+                  email: email.trim().toLowerCase(),
+                  createdAt: Date.now(),
+                });
+              }
+              return result;
             }}
             onSwitchToLogin={() => setAuthView('login')}
           />

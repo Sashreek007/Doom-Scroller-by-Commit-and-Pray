@@ -366,9 +366,9 @@ export default function Battle({
 
     if (profileIds.length > 0) {
       const { data: profileRows, error: profileError } = await supabase
-        .from('profiles')
-        .select('id, username, display_name, avatar_url, total_meters_scrolled')
-        .in('id', profileIds);
+        .rpc('get_social_profiles', {
+          profile_ids: profileIds,
+        });
 
       if (profileError) throw new Error(parseDbError(profileError));
 

@@ -4,6 +4,7 @@ import type { Profile as ProfileType, Achievement, AchievementRarity } from '@/s
 import { prepareAvatarUploadDataUrl } from '@/shared/avatar';
 import { writeProfileToCache } from '@/shared/profile-cache';
 import { metersToCoins } from '@/shared/coins';
+import { getVisibilityLabel } from '@/shared/privacy';
 import type { AchievementSyncedMessage } from '@/shared/messages';
 import GoldCoinIcon from '../components/GoldCoinIcon';
 import AchievementBadgeArt from '../components/AchievementBadgeArt';
@@ -45,6 +46,40 @@ function formatAchievementDate(iso: string): string {
   });
 }
 
+function PrivateAccountIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="5" y="11" width="14" height="10" rx="2.5" />
+      <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+      <circle cx="12" cy="16" r="1.2" />
+    </svg>
+  );
+}
+
+function getPrivacyChip(profile: ProfileType): { text: string; className: string } | null {
+  const visibility = getVisibilityLabel(profile);
+  if (visibility === 'public') return null;
+  if (visibility === 'friends') {
+    return {
+      text: 'FRIENDS ONLY',
+      className: 'text-yellow-300 border-yellow-300/40',
+    };
+  }
+  return {
+    text: 'PRIVATE',
+    className: 'text-neon-pink border-neon-pink/30',
+  };
+}
+
 function isAchievementSyncedMessage(value: unknown): value is AchievementSyncedMessage {
   if (!value || typeof value !== 'object') return false;
   const message = value as { type?: unknown; payload?: unknown };
@@ -63,6 +98,42 @@ interface ProfileProps {
   liveTotalMeters?: number;
 }
 
+interface SocialProfileRow {
+  id: string;
+  username: string;
+  display_name: string;
+  avatar_url: string | null;
+  total_meters_scrolled: number | string;
+  created_at?: string;
+  is_public?: boolean;
+  world_public?: boolean;
+  friends_public?: boolean;
+  can_view_details?: boolean;
+  coin_balance?: number | string | null;
+  coin_meter_checkpoint?: number | string | null;
+}
+
+function toProfile(row: SocialProfileRow): ProfileType {
+  return {
+    id: row.id,
+    username: row.username,
+    display_name: row.display_name,
+    avatar_url: row.avatar_url ?? null,
+    is_public: typeof row.is_public === 'boolean'
+      ? row.is_public
+      : typeof row.world_public === 'boolean'
+        ? row.world_public
+        : true,
+    world_public: typeof row.world_public === 'boolean' ? row.world_public : undefined,
+    friends_public: typeof row.friends_public === 'boolean' ? row.friends_public : undefined,
+    can_view_details: typeof row.can_view_details === 'boolean' ? row.can_view_details : undefined,
+    total_meters_scrolled: Number(row.total_meters_scrolled ?? 0),
+    coin_balance: Number(row.coin_balance ?? 0),
+    coin_meter_checkpoint: Number(row.coin_meter_checkpoint ?? 0),
+    created_at: row.created_at ?? new Date(0).toISOString(),
+  };
+}
+
 export default function Profile({
   userId,
   isOwnProfile,
@@ -71,9 +142,9 @@ export default function Profile({
   onProfileUpdated,
   liveTotalMeters,
 }: ProfileProps) {
-  const [profile, setProfile] = useState<ProfileType | null>(cachedProfile ?? null);
+  const [profile, setProfile] = useState<ProfileType | null>((isOwnProfile ? cachedProfile : null) ?? null);
   const [achievements, setAchievements] = useState<Achievement[]>([]);
-  const [loading, setLoading] = useState(!cachedProfile);
+  const [loading, setLoading] = useState(isOwnProfile ? !cachedProfile : true);
   const [avatarBusy, setAvatarBusy] = useState(false);
   const [avatarMessage, setAvatarMessage] = useState('');
   const [avatarMessageType, setAvatarMessageType] = useState<'success' | 'error'>('success');
@@ -112,7 +183,7 @@ export default function Profile({
 
     async function load() {
       // 1. Load from local cache first (instant)
-      if (!cachedProfile) {
+      if (isOwnProfile && !cachedProfile) {
         const cached = await chrome.storage.local.get([
           CACHE_KEY_PROFILE + userId,
           CACHE_KEY_ACHIEVEMENTS + userId,
@@ -122,31 +193,79 @@ export default function Profile({
         if (mounted && cp) { setProfile(cp); setLoading(false); }
         if (mounted && ca) setAchievements(ca);
       }
-      if (mounted && cachedProfile) setLoading(false);
+      if (mounted && isOwnProfile && cachedProfile) setLoading(false);
 
       // 2. Refresh from network in background
-      const [profileRes, achievementsRes] = await Promise.all([
-        cachedProfile ? Promise.resolve(null) :
-          supabase.from('profiles').select('*').eq('id', userId).single(),
-        supabase.from('achievements').select('*').eq('user_id', userId)
-          .order('earned_at', { ascending: false }),
-      ]);
+      let profileFromNetwork: ProfileType | null = null;
+      let canViewDetails = true;
+
+      if (isOwnProfile) {
+        if (!cachedProfile) {
+          const profileRes = await supabase.from('profiles').select('*').eq('id', userId).maybeSingle();
+          if (profileRes.data) {
+            profileFromNetwork = profileRes.data as ProfileType;
+          }
+        } else {
+          profileFromNetwork = cachedProfile;
+        }
+      } else {
+        const socialRes = await supabase.rpc('get_social_profiles', { profile_ids: [userId] });
+        if (!socialRes.error) {
+          const socialRow = ((socialRes.data as SocialProfileRow[] | null) ?? [])[0] ?? null;
+          if (!socialRow || socialRow.can_view_details === false) {
+            canViewDetails = false;
+          } else {
+            profileFromNetwork = toProfile(socialRow);
+          }
+        } else {
+          const fallbackRes = await supabase.from('profiles').select('*').eq('id', userId).maybeSingle();
+          if (!fallbackRes.data) {
+            canViewDetails = false;
+          } else {
+            profileFromNetwork = fallbackRes.data as ProfileType;
+          }
+        }
+      }
+
+      if (!canViewDetails) {
+        if (!mounted) return;
+        setProfile(null);
+        setAchievements([]);
+        setLoading(false);
+        if (!isOwnProfile) {
+          await chrome.storage.local.remove([
+            CACHE_KEY_PROFILE + userId,
+            CACHE_KEY_ACHIEVEMENTS + userId,
+          ]);
+        }
+        return;
+      }
+
+      const achievementsRes = await supabase
+        .from('achievements')
+        .select('*')
+        .eq('user_id', userId)
+        .order('earned_at', { ascending: false });
 
       if (!mounted) return;
 
-      if (profileRes?.data) {
-        setProfile(profileRes.data as ProfileType);
-        void syncProfileCaches(profileRes.data as ProfileType);
+      if (profileFromNetwork) {
+        setProfile(profileFromNetwork);
+        if (isOwnProfile) {
+          void syncProfileCaches(profileFromNetwork);
+        }
       }
       if (achievementsRes.data) {
         setAchievements(achievementsRes.data as Achievement[]);
-        chrome.storage.local.set({ [CACHE_KEY_ACHIEVEMENTS + userId]: achievementsRes.data });
+        if (isOwnProfile) {
+          chrome.storage.local.set({ [CACHE_KEY_ACHIEVEMENTS + userId]: achievementsRes.data });
+        }
       }
       setLoading(false);
     }
     load();
     return () => { mounted = false; };
-  }, [userId, cachedProfile, syncProfileCaches]);
+  }, [userId, cachedProfile, isOwnProfile, syncProfileCaches]);
 
   useEffect(() => {
     setAvatarBroken(false);
@@ -276,8 +395,10 @@ export default function Profile({
   if (!profile) {
     return (
       <div className="text-center py-8">
-        <p className="text-3xl mb-2">🔒</p>
-        <p className="text-doom-muted text-sm">Profile not found or private.</p>
+        <div className="mx-auto mb-3 w-12 h-12 rounded-full border border-doom-border bg-doom-surface/70 flex items-center justify-center">
+          <PrivateAccountIcon className="w-6 h-6 text-doom-muted" />
+        </div>
+        <p className="text-doom-muted text-sm">Account private or unavailable.</p>
         {onBack && (
           <button onClick={onBack} className="btn-primary text-xs mt-4">
             Go Back
@@ -299,6 +420,7 @@ export default function Profile({
   const coins = Number.isFinite(Number(profile.coin_balance))
     ? Math.max(0, Math.floor(Number(profile.coin_balance)))
     : metersToCoins(totalMetersForDisplay);
+  const privacyChip = getPrivacyChip(profile);
 
   return (
     <div className="flex flex-col gap-4">
@@ -381,9 +503,9 @@ export default function Profile({
           {profile.display_name}
         </h2>
         <p className="text-doom-muted text-xs font-mono">@{profile.username}</p>
-        {!profile.is_public && (
-          <span className="inline-block text-[10px] text-neon-pink border border-neon-pink/30 rounded px-1.5 py-0.5 mt-1">
-            PRIVATE
+        {privacyChip && (
+          <span className={`inline-block text-[10px] border rounded px-1.5 py-0.5 mt-1 ${privacyChip.className}`}>
+            {privacyChip.text}
           </span>
         )}
       </div>

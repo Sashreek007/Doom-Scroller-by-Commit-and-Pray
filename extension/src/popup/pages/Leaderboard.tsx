@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '@/shared/supabase';
 import type { LeaderboardEntry } from '@/shared/types';
+import { getFriendsPublic, getWorldPublic } from '@/shared/privacy';
 import UserAvatar from '../components/UserAvatar';
 
 interface LeaderboardProps {
@@ -18,7 +19,9 @@ interface ProfileRow {
   display_name: string;
   avatar_url: string | null;
   total_meters_scrolled: number | string;
-  is_public?: boolean;
+  is_public: boolean;
+  world_public?: boolean;
+  friends_public?: boolean;
 }
 
 interface LeaderboardData {
@@ -82,7 +85,8 @@ export default function Leaderboard({ userId, onViewProfile }: LeaderboardProps)
     // Fallback: rank public profiles live if view is unavailable or stale.
     const { data: topProfiles, error: topProfilesError } = await supabase
       .from('profiles')
-      .select('id, username, display_name, avatar_url, total_meters_scrolled')
+      .select('id, username, display_name, avatar_url, total_meters_scrolled, is_public, world_public')
+      .eq('world_public', true)
       .order('total_meters_scrolled', { ascending: false })
       .limit(50);
 
@@ -100,7 +104,7 @@ export default function Leaderboard({ userId, onViewProfile }: LeaderboardProps)
 
     const { data: meProfile, error: meProfileError } = await supabase
       .from('profiles')
-      .select('id, username, display_name, avatar_url, total_meters_scrolled')
+      .select('id, username, display_name, avatar_url, total_meters_scrolled, is_public, world_public')
       .eq('id', userId)
       .single();
 
@@ -111,10 +115,18 @@ export default function Leaderboard({ userId, onViewProfile }: LeaderboardProps)
       };
     }
 
+    if (!getWorldPublic(meProfile as ProfileRow)) {
+      return {
+        entries: ranked,
+        myRank: null,
+      };
+    }
+
     const myMeters = Number(meProfile.total_meters_scrolled ?? 0);
     const { count, error: rankCountError } = await supabase
       .from('profiles')
       .select('id', { count: 'exact', head: true })
+      .eq('world_public', true)
       .gt('total_meters_scrolled', myMeters);
 
     if (rankCountError) throw rankCountError;
@@ -148,13 +160,20 @@ export default function Leaderboard({ userId, onViewProfile }: LeaderboardProps)
 
     const { data: profiles, error: profilesError } = await supabase
       .from('profiles')
-      .select('id, username, display_name, avatar_url, total_meters_scrolled')
+      .select('id, username, display_name, avatar_url, total_meters_scrolled, is_public, world_public, friends_public')
       .in('id', [...ids])
       .order('total_meters_scrolled', { ascending: false });
 
     if (profilesError) throw profilesError;
 
-    const ranked = rankProfiles((profiles ?? []) as ProfileRow[]);
+    const visibleProfiles = ((profiles ?? []) as ProfileRow[])
+      .filter((profile) => {
+        if (profile.id === userId) return true;
+        if (getWorldPublic(profile)) return true;
+        return getFriendsPublic(profile);
+      });
+
+    const ranked = rankProfiles(visibleProfiles);
     return {
       entries: ranked,
       myRank: ranked.find((entry) => entry.user_id === userId) ?? null,
